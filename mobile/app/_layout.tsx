@@ -1,6 +1,6 @@
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { I18nManager, View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { setupI18n, i18n, isRTL, detectLocale, initializeLocale, saveLocale } from '../src/i18n';
 import { colors, spacing } from '../src/design/tokens';
@@ -12,16 +12,23 @@ export default function RootLayout() {
     return initial;
   });
   const [ready, setReady] = useState(false);
+  // Guards against a late initialization result overwriting a user selection
+  // that occurred after the user was allowed to interact (i.e., after ready).
+  const userSelectedRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const resolved = await initializeLocale();
-      if (!cancelled) {
-        setupI18n(resolved);
-        setLocale(resolved);
-        setReady(true);
+      if (cancelled || userSelectedRef.current) {
+        // Even if cancelled or user already chose, mark ready so UI can appear
+        // if we haven't unmounted. User choice takes precedence.
+        if (!cancelled) setReady(true);
+        return;
       }
+      setupI18n(resolved);
+      setLocale(resolved);
+      setReady(true);
     })();
     return () => {
       cancelled = true;
@@ -42,6 +49,8 @@ export default function RootLayout() {
   }, [locale, ready]);
 
   const toggleLanguage = async () => {
+    if (!ready) return;
+    userSelectedRef.current = true;
     const next: 'en' | 'ar' = locale === 'en' ? 'ar' : 'en';
     setupI18n(next);
     setLocale(next);
@@ -50,6 +59,14 @@ export default function RootLayout() {
   };
 
   const rtl = isRTL(locale);
+
+  if (!ready) {
+    return (
+      <View style={styles.container} testID="locale-loading">
+        <StatusBar style="dark" />
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.container, { direction: rtl ? 'rtl' : 'ltr' }]}>
@@ -60,6 +77,7 @@ export default function RootLayout() {
           style={styles.langButton}
           accessibilityRole="button"
           accessibilityLabel={locale === 'en' ? i18n.t('common.switchToArabic') : i18n.t('common.switchToEnglish')}
+          testID="lang-toggle"
         >
           <Text style={styles.langText}>
             {locale === 'en' ? 'العربية' : 'English'}

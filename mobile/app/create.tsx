@@ -14,6 +14,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { colors, spacing, typography, radii } from '../src/design/tokens';
 import { i18n, isRTL } from '../src/i18n';
 import { validateImageUpload } from '../src/utils/upload';
+import type { UploadErrorCode } from '../src/models';
 
 export default function CreateScreen() {
   const { width } = useWindowDimensions();
@@ -23,7 +24,15 @@ export default function CreateScreen() {
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [duration, setDuration] = useState<'15s' | '30s' | '60s'>('30s');
   const [style, setStyle] = useState<'cinematic' | 'dynamic' | 'minimal'>('cinematic');
-  const [error, setError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<UploadErrorCode | 'validation' | null>(null);
+
+  const getErrorMessage = (code: UploadErrorCode | 'validation' | null): string | null => {
+    if (!code) return null;
+    if (code === 'validation') return i18n.t('create.validationError');
+    const key = `create.errors.${code}`;
+    const msg = i18n.t(key);
+    return msg === key ? i18n.t('create.errors.unknown') : msg;
+  };
 
   const pickImage = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -42,21 +51,21 @@ export default function CreateScreen() {
       const asset = result.assets[0];
       const validation = validateImageUpload(asset.uri, asset.mimeType, asset.fileSize);
       if (!validation.valid) {
-        setError(validation.error ?? i18n.t('create.invalidImage'));
+        setErrorCode(validation.errorCode ?? 'missing_uri');
         setImageUri(null);
         return;
       }
       setImageUri(asset.uri);
-      setError(null);
+      setErrorCode(null);
     }
   };
 
   const handleGenerate = () => {
     if (!prompt.trim() && !imageUri) {
-      setError(i18n.t('create.validationError'));
+      setErrorCode('validation');
       return;
     }
-    setError(null);
+    setErrorCode(null);
     // Honest: generation is not connected
     Alert.alert(
       i18n.t('create.generateButton'),
@@ -93,11 +102,16 @@ export default function CreateScreen() {
         <Text style={[typography.caption, styles.label, isRTL() && styles.rtlText]}>
           {i18n.t('create.uploadLabel')}
         </Text>
-        <TouchableOpacity style={styles.uploadButton} onPress={pickImage} accessibilityRole="button">
+        <TouchableOpacity
+          style={styles.uploadButton}
+          onPress={pickImage}
+          accessibilityRole="button"
+          accessibilityLabel={i18n.t('a11y.uploadButton')}
+        >
           <Text style={styles.uploadButtonText}>{i18n.t('create.uploadButton')}</Text>
         </TouchableOpacity>
         {imageUri && (
-          <Image source={{ uri: imageUri }} style={styles.previewImage} accessibilityLabel="Selected image" />
+          <Image source={{ uri: imageUri }} style={styles.previewImage} accessibilityLabel={i18n.t('a11y.selectedImage')} />
         )}
       </View>
 
@@ -112,6 +126,9 @@ export default function CreateScreen() {
               key={d}
               style={[styles.chip, duration === d && styles.chipActive]}
               onPress={() => setDuration(d)}
+              accessibilityRole="button"
+              accessibilityLabel={i18n.t('a11y.durationChip', { value: d })}
+              accessibilityState={{ selected: duration === d }}
             >
               <Text style={[styles.chipText, duration === d && styles.chipTextActive]}>{d}</Text>
             </TouchableOpacity>
@@ -124,6 +141,9 @@ export default function CreateScreen() {
               key={s}
               style={[styles.chip, style === s && styles.chipActive]}
               onPress={() => setStyle(s)}
+              accessibilityRole="button"
+              accessibilityLabel={i18n.t('a11y.styleChip', { value: s })}
+              accessibilityState={{ selected: style === s }}
             >
               <Text style={[styles.chipText, style === s && styles.chipTextActive]}>{s}</Text>
             </TouchableOpacity>
@@ -142,9 +162,9 @@ export default function CreateScreen() {
         </View>
       </View>
 
-      {error && (
+      {errorCode && (
         <Text style={styles.errorText} accessibilityRole="alert">
-          {error}
+          {getErrorMessage(errorCode)}
         </Text>
       )}
 

@@ -25,7 +25,15 @@
     "plugins": [
       "expo-router",
       "expo-localization",
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "backgroundColor": "#ffffff",
+          "imageWidth": 200
+        }
+      ]
     ]
   }
 }

@@ -13,7 +13,15 @@ export interface VideoCreationInput {
   style: 'cinematic' | 'dynamic' | 'minimal';
 }
 
+export type UploadErrorCode =
+  | 'missing_uri'
+  | 'missing_mime'
+  | 'unsupported_mime'
+  | 'missing_size'
+  | 'invalid_size'
+  | 'too_large';
+
 export interface UploadValidationResult {
   valid: boolean;
-  error?: string;
+  errorCode?: UploadErrorCode;
 }

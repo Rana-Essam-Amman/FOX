@@ -2,7 +2,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import { I18nManager, View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { setupI18n, i18n, isRTL, detectLocale } from '../src/i18n';
+import { setupI18n, i18n, isRTL, detectLocale, initializeLocale, saveLocale } from '../src/i18n';
 import { colors, spacing } from '../src/design/tokens';
 
 export default function RootLayout() {
@@ -11,24 +11,42 @@ export default function RootLayout() {
     setupI18n(initial);
     return initial;
   });
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    const rtl = isRTL(locale);
-    if (I18nManager.isRTL !== rtl) {
-      I18nManager.forceRTL(rtl);
-      // Native platforms may require a full app reload for complete RTL layout flip.
-      // Web applies direction immediately via the container style.
-    }
-  }, [locale]);
+    let cancelled = false;
+    (async () => {
+      const resolved = await initializeLocale();
+      if (!cancelled) {
+        setupI18n(resolved);
+        setLocale(resolved);
+        setReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  const toggleLanguage = () => {
+  useEffect(() => {
+    if (!ready) return;
+    const rtl = isRTL(locale);
+    // forceRTL only takes full effect after a native app reload.
+    // We call it only when the desired direction differs from the current native setting,
+    // and only once per change, not on every render.
+    if (Platform.OS !== 'web' && I18nManager.isRTL !== rtl) {
+      I18nManager.forceRTL(rtl);
+      // Full native layout flip requires restarting the app.
+      // Web direction is applied immediately via the container style below.
+    }
+  }, [locale, ready]);
+
+  const toggleLanguage = async () => {
     const next: 'en' | 'ar' = locale === 'en' ? 'ar' : 'en';
     setupI18n(next);
     setLocale(next);
-    if (Platform.OS !== 'web') {
-      // On native, forceRTL takes effect after reload for full layout flip.
-      // The state update is still applied so strings change immediately.
-    }
+    await saveLocale(next);
+    // On native, I18nManager.forceRTL does not flip the layout until the next app launch.
   };
 
   const rtl = isRTL(locale);
@@ -41,7 +59,7 @@ export default function RootLayout() {
           onPress={toggleLanguage}
           style={styles.langButton}
           accessibilityRole="button"
-          accessibilityLabel={locale === 'en' ? 'Switch to Arabic' : 'Switch to English'}
+          accessibilityLabel={locale === 'en' ? i18n.t('common.switchToArabic') : i18n.t('common.switchToEnglish')}
         >
           <Text style={styles.langText}>
             {locale === 'en' ? 'العربية' : 'English'}

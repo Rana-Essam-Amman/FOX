@@ -1,5 +1,8 @@
 import { I18n } from 'i18n-js';
 import { getLocales } from 'expo-localization';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const LOCALE_KEY = '@fox_locale';
 
 const translations = {
   en: {
@@ -29,17 +32,29 @@ const translations = {
       generateButton: 'Generate Video',
       notConnected: 'Video generation is not yet connected to the backend. This is a preview of the interface.',
       validationError: 'Please provide a prompt or an image.',
-      imageTooLarge: 'Image must be under 10MB.',
-      invalidImage: 'Please select a valid image file.',
-      missingData: 'Image data is incomplete.',
-      unknownMime: 'Image type could not be verified.',
-      invalidSize: 'Image size is invalid.',
+      errors: {
+        missing_uri: 'No file selected or URI is empty.',
+        missing_mime: 'Image type could not be verified (missing MIME type).',
+        unsupported_mime: 'Unsupported image type. Supported: JPEG, PNG, WebP, GIF.',
+        missing_size: 'Image size is missing and could not be verified.',
+        invalid_size: 'Image size is invalid (must be a positive finite number).',
+        too_large: 'Image must be under 10MB.',
+        unknown: 'An unknown validation error occurred.',
+      },
     },
     common: {
       language: 'Language',
       english: 'English',
       arabic: 'العربية',
       back: 'Back',
+      switchToArabic: 'Switch to Arabic',
+      switchToEnglish: 'Switch to English',
+    },
+    a11y: {
+      durationChip: 'Duration {{value}}',
+      styleChip: 'Style {{value}}',
+      uploadButton: 'Select reference image',
+      selectedImage: 'Selected reference image',
     },
   },
   ar: {
@@ -69,17 +84,29 @@ const translations = {
       generateButton: 'توليد الفيديو',
       notConnected: 'توليد الفيديو غير متصل بالخلفية بعد. هذه معاينة للواجهة.',
       validationError: 'يرجى تقديم وصف أو صورة.',
-      imageTooLarge: 'يجب أن تكون الصورة أقل من 10 ميجابايت.',
-      invalidImage: 'يرجى اختيار ملف صورة صالح.',
-      missingData: 'بيانات الصورة غير مكتملة.',
-      unknownMime: 'تعذر التحقق من نوع الصورة.',
-      invalidSize: 'حجم الصورة غير صالح.',
+      errors: {
+        missing_uri: 'لم يتم اختيار ملف أو أن الرابط فارغ.',
+        missing_mime: 'تعذر التحقق من نوع الصورة (نوع MIME مفقود).',
+        unsupported_mime: 'نوع الصورة غير مدعوم. المدعوم: JPEG، PNG، WebP، GIF.',
+        missing_size: 'حجم الصورة مفقود وتعذر التحقق منه.',
+        invalid_size: 'حجم الصورة غير صالح (يجب أن يكون رقماً موجباً محدوداً).',
+        too_large: 'يجب أن تكون الصورة أقل من 10 ميجابايت.',
+        unknown: 'حدث خطأ تحقق غير معروف.',
+      },
     },
     common: {
       language: 'اللغة',
       english: 'English',
       arabic: 'العربية',
       back: 'رجوع',
+      switchToArabic: 'التبديل إلى العربية',
+      switchToEnglish: 'التبديل إلى الإنجليزية',
+    },
+    a11y: {
+      durationChip: 'المدة {{value}}',
+      styleChip: 'الأسلوب {{value}}',
+      uploadButton: 'اختيار صورة مرجعية',
+      selectedImage: 'الصورة المرجعية المختارة',
     },
   },
 };
@@ -97,12 +124,37 @@ export function setupI18n(locale: 'en' | 'ar' = detectLocale()): void {
   i18n.defaultLocale = 'en';
 }
 
-export function t(key: string): string {
-  return i18n.t(key);
+export function t(key: string, options?: Record<string, string>): string {
+  return i18n.t(key, options);
 }
 
 export function isRTL(locale: string = i18n.locale): boolean {
   return locale === 'ar';
+}
+
+export async function loadSavedLocale(): Promise<'en' | 'ar' | null> {
+  try {
+    const saved = await AsyncStorage.getItem(LOCALE_KEY);
+    if (saved === 'en' || saved === 'ar') return saved;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveLocale(locale: 'en' | 'ar'): Promise<void> {
+  try {
+    await AsyncStorage.setItem(LOCALE_KEY, locale);
+  } catch {
+    // Storage failure is non-fatal; locale still works for the session
+  }
+}
+
+export async function initializeLocale(): Promise<'en' | 'ar'> {
+  const saved = await loadSavedLocale();
+  const locale = saved ?? detectLocale();
+  setupI18n(locale);
+  return locale;
 }
 
 // Initialize once at module load so first render is consistent

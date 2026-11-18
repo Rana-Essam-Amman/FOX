@@ -14,7 +14,6 @@ import * as ImagePicker from 'expo-image-picker';
 import { colors, spacing, typography, radii } from '../src/design/tokens';
 import { i18n, isRTL } from '../src/i18n';
 import { validateImageUpload } from '../src/utils/upload';
-import { VideoCreationInput } from '../src/models';
 
 export default function CreateScreen() {
   const { width } = useWindowDimensions();
@@ -237,7 +236,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surface,
-    minHeight: 36,
+    minHeight: 44,
     justifyContent: 'center',
   },
   chipActive: {

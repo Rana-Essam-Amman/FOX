@@ -31,6 +31,9 @@ const translations = {
       validationError: 'Please provide a prompt or an image.',
       imageTooLarge: 'Image must be under 10MB.',
       invalidImage: 'Please select a valid image file.',
+      missingData: 'Image data is incomplete.',
+      unknownMime: 'Image type could not be verified.',
+      invalidSize: 'Image size is invalid.',
     },
     common: {
       language: 'Language',
@@ -68,6 +71,9 @@ const translations = {
       validationError: 'يرجى تقديم وصف أو صورة.',
       imageTooLarge: 'يجب أن تكون الصورة أقل من 10 ميجابايت.',
       invalidImage: 'يرجى اختيار ملف صورة صالح.',
+      missingData: 'بيانات الصورة غير مكتملة.',
+      unknownMime: 'تعذر التحقق من نوع الصورة.',
+      invalidSize: 'حجم الصورة غير صالح.',
     },
     common: {
       language: 'اللغة',
@@ -80,8 +86,13 @@ const translations = {
 
 export const i18n = new I18n(translations);
 
-export function setupI18n(locale: string = getLocales()[0]?.languageCode ?? 'en') {
-  i18n.locale = locale.startsWith('ar') ? 'ar' : 'en';
+export function detectLocale(): 'en' | 'ar' {
+  const code = getLocales()[0]?.languageCode ?? 'en';
+  return code.startsWith('ar') ? 'ar' : 'en';
+}
+
+export function setupI18n(locale: 'en' | 'ar' = detectLocale()): void {
+  i18n.locale = locale;
   i18n.enableFallback = true;
   i18n.defaultLocale = 'en';
 }
@@ -90,6 +101,9 @@ export function t(key: string): string {
   return i18n.t(key);
 }
 
-export function isRTL(): boolean {
-  return i18n.locale === 'ar';
+export function isRTL(locale: string = i18n.locale): boolean {
+  return locale === 'ar';
 }
+
+// Initialize once at module load so first render is consistent
+setupI18n();

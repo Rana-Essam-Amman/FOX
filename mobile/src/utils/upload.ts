@@ -1,22 +1,34 @@
 import { UploadValidationResult } from '../models';
 
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
-const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 
 export function validateImageUpload(
-  uri: string,
-  mimeType?: string,
-  fileSize?: number
+  uri: string | null | undefined,
+  mimeType?: string | null | undefined,
+  fileSize?: number | null | undefined
 ): UploadValidationResult {
-  if (!uri) {
-    return { valid: false, error: 'No file selected' };
+  if (uri == null || uri.trim() === '') {
+    return { valid: false, error: 'No file selected or URI is empty.' };
   }
 
-  if (mimeType && !ALLOWED_TYPES.includes(mimeType)) {
-    return { valid: false, error: 'Please select a valid image file (JPEG, PNG, WebP, GIF).' };
+  if (mimeType == null || mimeType.trim() === '') {
+    return { valid: false, error: 'Image type could not be verified (missing MIME type).' };
   }
 
-  if (fileSize && fileSize > MAX_IMAGE_SIZE) {
+  if (!ALLOWED_TYPES.has(mimeType)) {
+    return { valid: false, error: `Unsupported image type: ${mimeType}. Supported: JPEG, PNG, WebP, GIF.` };
+  }
+
+  if (fileSize == null) {
+    return { valid: false, error: 'Image size is missing and could not be verified.' };
+  }
+
+  if (typeof fileSize !== 'number' || !Number.isFinite(fileSize) || fileSize <= 0) {
+    return { valid: false, error: 'Image size is invalid (must be a positive finite number).' };
+  }
+
+  if (fileSize > MAX_IMAGE_SIZE) {
     return { valid: false, error: 'Image must be under 10MB.' };
   }
 

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,54 +10,44 @@ import {
   Alert,
   useWindowDimensions,
 } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { colors, spacing, typography, radii } from '../src/design/tokens';
 import { i18n, isRTL } from '../src/i18n';
 import { validateImageUpload } from '../src/utils/upload';
 import type { UploadErrorCode } from '../src/models';
-
-type Duration = '15s' | '30s' | '60s';
-type Style = 'cinematic' | 'dynamic' | 'minimal';
-type Aspect = '16:9' | '9:16' | '1:1';
+import { setLocalDraft, type Duration, type VisualStyle, type Aspect } from '../src/draft';
 
 export default function CreateScreen() {
   const { width } = useWindowDimensions();
   const isDesktop = width >= 768;
   const params = useLocalSearchParams<{ mode?: string; concept?: string }>();
+  const router = useRouter();
   const rtl = isRTL();
+  const promptRef = useRef<TextInput>(null);
+  const imageModeTriggered = useRef(false);
 
   const initialPrompt = (() => {
     if (!params.concept) return '';
-    const conceptMap: Record<string, string> = {
-      product: isRTL() ? 'عرض منتج بأسلوب احترافي' : 'Professional product showcase',
-      social: isRTL() ? 'محتوى قصير جذاب' : 'Engaging short-form content',
-      story: isRTL() ? 'لحظة قصة مميزة' : 'A memorable story moment',
-    };
-    return conceptMap[params.concept] ?? '';
+    const key = `create.concepts.${params.concept}`;
+    const translated = i18n.t(key);
+    return translated === key ? '' : translated;
   })();
 
   const [prompt, setPrompt] = useState(initialPrompt);
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [duration, setDuration] = useState<Duration>('30s');
-  const [style, setStyle] = useState<Style>('cinematic');
+  const [style, setStyle] = useState<VisualStyle>('cinematic');
   const [aspect, setAspect] = useState<Aspect>('9:16');
   const [errorCode, setErrorCode] = useState<UploadErrorCode | 'validation' | null>(null);
+  const [selectedConcept, setSelectedConcept] = useState<string | null>(params.concept ?? null);
 
-  // Note: params.mode === 'image' is noted for future focus behavior; prompt starts empty for image mode.
-
-  const getErrorMessage = (code: UploadErrorCode | 'validation' | null): string | null => {
-    if (!code) return null;
-    if (code === 'validation') return i18n.t('create.validationError');
-    const key = `create.errors.${code}`;
-    const msg = i18n.t(key);
-    return msg === key ? i18n.t('create.errors.unknown') : msg;
-  };
+  const mode = params.mode;
 
   const pickImage = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert('Permission required', 'Please allow access to your photo library.');
+      Alert.alert(i18n.t('create.permissionTitle'), i18n.t('create.permissionMessage'));
       return;
     }
 
@@ -80,17 +70,53 @@ export default function CreateScreen() {
     }
   };
 
+  useEffect(() => {
+    if (mode === 'text') {
+      const timer = setTimeout(() => {
+        promptRef.current?.focus();
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [mode]);
+
+  useEffect(() => {
+    if (mode === 'image' && !imageModeTriggered.current) {
+      imageModeTriggered.current = true;
+      void pickImage();
+    }
+  }, [mode]);
+
+  const getErrorMessage = (code: UploadErrorCode | 'validation' | null): string | null => {
+    if (!code) return null;
+    if (code === 'validation') return i18n.t('create.validationError');
+    const key = `create.errors.${code}`;
+    const msg = i18n.t(key);
+    return msg === key ? i18n.t('create.errors.unknown') : msg;
+  };
+
+  const applyConcept = (key: string) => {
+    const translated = i18n.t(`create.concepts.${key}`);
+    setSelectedConcept(key);
+    setPrompt(translated);
+  };
+
   const handleContinue = () => {
     if (!prompt.trim() && !imageUri) {
       setErrorCode('validation');
       return;
     }
     setErrorCode(null);
-    Alert.alert(
-      i18n.t('create.generateButton'),
-      i18n.t('create.notConnected')
-    );
+    setLocalDraft({
+      prompt: prompt.trim(),
+      imageUri,
+      duration,
+      style,
+      aspect,
+    });
+    router.push('/review');
   };
+
+  const showConceptChooser = mode === 'concept' && !selectedConcept;
 
   return (
     <ScrollView
@@ -101,12 +127,44 @@ export default function CreateScreen() {
         {i18n.t('create.title')}
       </Text>
 
+      {selectedConcept && (
+        <View style={styles.conceptBanner}>
+          <Text style={[typography.caption, styles.conceptBannerText, rtl && styles.rtlText]}>
+            {i18n.t('create.conceptBanner')}
+          </Text>
+        </View>
+      )}
+
+      {showConceptChooser && (
+        <View style={styles.section}>
+          <Text style={[typography.caption, styles.sectionLabel, rtl && styles.rtlText]}>
+            {i18n.t('create.conceptChoose')}
+          </Text>
+          <View style={styles.chipRow}>
+            {(['product', 'social', 'story'] as const).map((key) => (
+              <TouchableOpacity
+                key={key}
+                style={styles.chip}
+                onPress={() => applyConcept(key)}
+                accessibilityRole="button"
+                accessibilityLabel={i18n.t(`home.template${key.charAt(0).toUpperCase() + key.slice(1)}`)}
+              >
+                <Text style={styles.chipText}>
+                  {i18n.t(`home.template${key.charAt(0).toUpperCase() + key.slice(1)}`)}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+      )}
+
       {/* Idea / prompt */}
       <View style={styles.section}>
         <Text style={[typography.caption, styles.sectionLabel, rtl && styles.rtlText]}>
           {i18n.t('create.promptLabel')}
         </Text>
         <TextInput
+          ref={promptRef}
           style={[styles.input, rtl && styles.rtlInput]}
           placeholder={i18n.t('create.promptPlaceholder')}
           placeholderTextColor={colors.textSecondary}
@@ -115,6 +173,7 @@ export default function CreateScreen() {
           multiline
           numberOfLines={4}
           accessibilityLabel={i18n.t('create.promptLabel')}
+          autoFocus={mode === 'text'}
         />
       </View>
 
@@ -124,7 +183,7 @@ export default function CreateScreen() {
           {i18n.t('create.uploadLabel')}
         </Text>
         <TouchableOpacity
-          style={styles.uploadButton}
+          style={[styles.uploadButton, mode === 'image' && styles.uploadButtonEmphasized]}
           onPress={pickImage}
           accessibilityRole="button"
           accessibilityLabel={i18n.t('a11y.uploadButton')}
@@ -149,7 +208,7 @@ export default function CreateScreen() {
         <Text style={[typography.caption, styles.optionLabel, rtl && styles.rtlText]}>
           {i18n.t('create.aspectLabel')}
         </Text>
-        <View style={styles.chipRow}>
+        <View style={[styles.chipRow, rtl && styles.chipRowRtl]}>
           {(['9:16', '16:9', '1:1'] as Aspect[]).map((a) => (
             <TouchableOpacity
               key={a}
@@ -167,7 +226,7 @@ export default function CreateScreen() {
         <Text style={[typography.caption, styles.optionLabel, rtl && styles.rtlText]}>
           {i18n.t('create.durationLabel')}
         </Text>
-        <View style={styles.chipRow}>
+        <View style={[styles.chipRow, rtl && styles.chipRowRtl]}>
           {(['15s', '30s', '60s'] as Duration[]).map((d) => (
             <TouchableOpacity
               key={d}
@@ -185,8 +244,8 @@ export default function CreateScreen() {
         <Text style={[typography.caption, styles.optionLabel, rtl && styles.rtlText]}>
           {i18n.t('create.styleLabel')}
         </Text>
-        <View style={styles.chipRow}>
-          {(['cinematic', 'dynamic', 'minimal'] as Style[]).map((s) => (
+        <View style={[styles.chipRow, rtl && styles.chipRowRtl]}>
+          {(['cinematic', 'dynamic', 'minimal'] as VisualStyle[]).map((s) => (
             <TouchableOpacity
               key={s}
               style={[styles.chip, style === s && styles.chipActive]}
@@ -196,9 +255,7 @@ export default function CreateScreen() {
               accessibilityState={{ selected: style === s }}
             >
               <Text style={[styles.chipText, style === s && styles.chipTextActive]}>
-                {s === 'cinematic' ? (rtl ? 'سينمائي' : 'Cinematic') :
-                 s === 'dynamic' ? (rtl ? 'ديناميكي' : 'Dynamic') :
-                 (rtl ? 'بسيط' : 'Minimal')}
+                {i18n.t(`create.styles.${s}`)}
               </Text>
             </TouchableOpacity>
           ))}
@@ -221,10 +278,10 @@ export default function CreateScreen() {
           {(prompt || imageUri) && (
             <View style={styles.previewMeta}>
               <Text style={[typography.caption, styles.previewMetaText, rtl && styles.rtlText]} numberOfLines={2}>
-                {prompt || (rtl ? 'صورة مرجعية' : 'Reference image')}
+                {prompt || i18n.t('create.referenceImageFallback')}
               </Text>
               <Text style={[typography.small, styles.previewMetaSub, rtl && styles.rtlText]}>
-                {aspect} · {duration} · {style}
+                {aspect} · {duration} · {i18n.t(`create.styles.${style}`)}
               </Text>
             </View>
           )}
@@ -308,6 +365,25 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: colors.border,
+  },
+  uploadButtonEmphasized: {
+    borderColor: colors.primary,
+    borderWidth: 2,
+  },
+  conceptBanner: {
+    backgroundColor: colors.elevated,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    padding: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  conceptBannerText: {
+    color: colors.primary,
+    textAlign: 'center',
+  },
+  chipRowRtl: {
+    flexDirection: 'row-reverse',
   },
   uploadButtonText: {
     color: colors.text,

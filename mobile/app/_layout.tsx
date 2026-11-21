@@ -94,6 +94,7 @@ export default function RootLayout() {
       >
         <Stack.Screen name="index" options={{ title: i18n.t('home.title'), headerShown: false }} />
         <Stack.Screen name="create" options={{ title: i18n.t('create.title') }} />
+        <Stack.Screen name="review" options={{ title: i18n.t('create.review.title') }} />
       </Stack>
     </View>
   );

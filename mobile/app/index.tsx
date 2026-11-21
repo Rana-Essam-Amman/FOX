@@ -64,7 +64,7 @@ export default function HomeScreen() {
               {i18n.t('home.textIdea')}
             </Text>
             <Text style={[typography.caption, styles.quickCardHint, rtl && styles.rtlText]}>
-              {rtl ? 'اكتب فكرتك' : 'Write your idea'}
+              {i18n.t('home.textIdeaHint')}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -77,7 +77,7 @@ export default function HomeScreen() {
               {i18n.t('home.imageStart')}
             </Text>
             <Text style={[typography.caption, styles.quickCardHint, rtl && styles.rtlText]}>
-              {rtl ? 'ارفع صورة' : 'Upload a photo'}
+              {i18n.t('home.imageStartHint')}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -90,7 +90,7 @@ export default function HomeScreen() {
               {i18n.t('home.conceptStart')}
             </Text>
             <Text style={[typography.caption, styles.quickCardHint, rtl && styles.rtlText]}>
-              {rtl ? 'اختر مفهوماً' : 'Pick a concept'}
+              {i18n.t('home.conceptStartHint')}
             </Text>
           </TouchableOpacity>
         </View>
@@ -128,7 +128,7 @@ export default function HomeScreen() {
               {i18n.t('home.templateProduct')}
             </Text>
             <Text style={[typography.caption, styles.templateHint, rtl && styles.rtlText]}>
-              {rtl ? 'أبرز منتجك' : 'Showcase your product'}
+              {i18n.t('home.templateProductHint')}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -142,7 +142,7 @@ export default function HomeScreen() {
               {i18n.t('home.templateSocial')}
             </Text>
             <Text style={[typography.caption, styles.templateHint, rtl && styles.rtlText]}>
-              {rtl ? 'محتوى قصير' : 'Short-form content'}
+              {i18n.t('home.templateSocialHint')}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -156,7 +156,7 @@ export default function HomeScreen() {
               {i18n.t('home.templateStory')}
             </Text>
             <Text style={[typography.caption, styles.templateHint, rtl && styles.rtlText]}>
-              {rtl ? 'لحظة مميزة' : 'A memorable moment'}
+              {i18n.t('home.templateStoryHint')}
             </Text>
           </TouchableOpacity>
         </View>

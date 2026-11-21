@@ -2,14 +2,22 @@ import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, useWindowD
 import { useRouter } from 'expo-router';
 import { colors, spacing, typography, radii } from '../src/design/tokens';
 import { i18n, isRTL } from '../src/i18n';
-import { getLocalDraft } from '../src/draft';
+import { useLocalDraft } from '../src/hooks/useLocalDraft';
 
 export default function ReviewScreen() {
   const { width } = useWindowDimensions();
   const isDesktop = width >= 768;
   const router = useRouter();
   const rtl = isRTL();
-  const draft = getLocalDraft();
+  const { draft, loaded } = useLocalDraft();
+
+  if (!loaded) {
+    return (
+      <View style={styles.emptyContainer}>
+        <Text style={[typography.body, styles.emptyText]}>Loading…</Text>
+      </View>
+    );
+  }
 
   if (!draft) {
     return (

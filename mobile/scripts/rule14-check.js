@@ -26,6 +26,7 @@ function classify(rel) {
   if (n.includes('/i18n/') || n.endsWith('/i18n.ts')) return null;
   if (n.includes('/styles/') && n.endsWith('.ts')) return 'style';
   if (n.includes('/services/') && n.endsWith('.ts')) return 'service';
+  if (n.includes('/api/') && n.endsWith('.ts') && !n.endsWith('.test.ts')) return 'service';
   if (n.endsWith('.ts') && !n.endsWith('.test.ts') && !n.endsWith('.d.ts') && !n.includes('node_modules')) return 'helper';
   return null;
 }

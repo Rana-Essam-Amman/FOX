@@ -38,6 +38,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Expo SDK compatibility
+        run: npx expo install --check
+
+      - name: Expo Doctor
+        run: npx expo-doctor
+
+      - name: Dependency audit report
+        run: |
+          npm audit --json > npm-audit.json || true
+          node -e "const report = require('./npm-audit.json'); console.log('AUDIT_SUMMARY', JSON.stringify(report.metadata?.vulnerabilities ?? {})); for (const [name, item] of Object.entries(report.vulnerabilities ?? {})) console.log('AUDIT_ITEM', JSON.stringify({ name, severity: item.severity, range: item.range, fixAvailable: item.fixAvailable, via: item.via.map(entry => typeof entry === 'string' ? entry : entry.title) }));"
+
       - name: TypeScript
         run: npm run typecheck
 

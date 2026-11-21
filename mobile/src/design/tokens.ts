@@ -1,15 +1,16 @@
 export const colors = {
-  background: '#FFFFFF',
-  surface: '#F8F9FA',
-  primary: '#FF6B35',
-  primaryDark: '#E55A2B',
-  secondary: '#4ECDC4',
-  text: '#1A1A2E',
-  textSecondary: '#6B7280',
-  border: '#E5E7EB',
+  background: '#0D1014',
+  surface: '#151A20',
+  elevated: '#1D242C',
+  primary: '#FF873D',
+  primaryPressed: '#E96D28',
+  text: '#F5F2EA',
+  textSecondary: '#9AA3AD',
+  border: '#2A323C',
   error: '#EF4444',
   success: '#10B981',
-  disabled: '#9CA3AF',
+  disabled: '#6B7280',
+  accent: '#FF873D',
 };
 
 export const spacing = {
@@ -42,11 +43,17 @@ export const typography = {
     fontWeight: '400' as const,
     lineHeight: 20,
   },
+  small: {
+    fontSize: 12,
+    fontWeight: '400' as const,
+    lineHeight: 16,
+  },
 };
 
 export const radii = {
   sm: 8,
   md: 12,
   lg: 16,
+  xl: 20,
   full: 9999,
 };

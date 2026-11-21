@@ -63,14 +63,14 @@ export default function RootLayout() {
   if (!ready) {
     return (
       <View style={styles.container} testID="locale-loading">
-        <StatusBar style="dark" />
+        <StatusBar style="light" />
       </View>
     );
   }
 
   return (
     <View style={[styles.container, { direction: rtl ? 'rtl' : 'ltr' }]}>
-      <StatusBar style="dark" />
+      <StatusBar style="light" />
       <View style={styles.langBar}>
         <TouchableOpacity
           onPress={toggleLanguage}
@@ -86,9 +86,9 @@ export default function RootLayout() {
       </View>
       <Stack
         screenOptions={{
-          headerStyle: { backgroundColor: colors.background },
+          headerStyle: { backgroundColor: colors.surface },
           headerTintColor: colors.primary,
-          headerTitleStyle: { fontWeight: '600' },
+          headerTitleStyle: { fontWeight: '600', color: colors.text },
           contentStyle: { backgroundColor: colors.background },
         }}
       >
@@ -112,7 +112,7 @@ const styles = StyleSheet.create({
   langButton: {
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
-    backgroundColor: colors.surface,
+    backgroundColor: colors.elevated,
     borderRadius: 20,
     borderWidth: 1,
     borderColor: colors.border,
@@ -122,7 +122,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   langText: {
-    color: colors.primary,
+    color: colors.text,
     fontWeight: '600',
     fontSize: 14,
   },

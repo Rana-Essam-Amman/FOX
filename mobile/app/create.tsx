@@ -10,21 +10,41 @@ import {
   Alert,
   useWindowDimensions,
 } from 'react-native';
+import { useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { colors, spacing, typography, radii } from '../src/design/tokens';
 import { i18n, isRTL } from '../src/i18n';
 import { validateImageUpload } from '../src/utils/upload';
 import type { UploadErrorCode } from '../src/models';
 
+type Duration = '15s' | '30s' | '60s';
+type Style = 'cinematic' | 'dynamic' | 'minimal';
+type Aspect = '16:9' | '9:16' | '1:1';
+
 export default function CreateScreen() {
   const { width } = useWindowDimensions();
   const isDesktop = width >= 768;
+  const params = useLocalSearchParams<{ mode?: string; concept?: string }>();
+  const rtl = isRTL();
 
-  const [prompt, setPrompt] = useState('');
+  const initialPrompt = (() => {
+    if (!params.concept) return '';
+    const conceptMap: Record<string, string> = {
+      product: isRTL() ? 'عرض منتج بأسلوب احترافي' : 'Professional product showcase',
+      social: isRTL() ? 'محتوى قصير جذاب' : 'Engaging short-form content',
+      story: isRTL() ? 'لحظة قصة مميزة' : 'A memorable story moment',
+    };
+    return conceptMap[params.concept] ?? '';
+  })();
+
+  const [prompt, setPrompt] = useState(initialPrompt);
   const [imageUri, setImageUri] = useState<string | null>(null);
-  const [duration, setDuration] = useState<'15s' | '30s' | '60s'>('30s');
-  const [style, setStyle] = useState<'cinematic' | 'dynamic' | 'minimal'>('cinematic');
+  const [duration, setDuration] = useState<Duration>('30s');
+  const [style, setStyle] = useState<Style>('cinematic');
+  const [aspect, setAspect] = useState<Aspect>('9:16');
   const [errorCode, setErrorCode] = useState<UploadErrorCode | 'validation' | null>(null);
+
+  // Note: params.mode === 'image' is noted for future focus behavior; prompt starts empty for image mode.
 
   const getErrorMessage = (code: UploadErrorCode | 'validation' | null): string | null => {
     if (!code) return null;
@@ -60,13 +80,12 @@ export default function CreateScreen() {
     }
   };
 
-  const handleGenerate = () => {
+  const handleContinue = () => {
     if (!prompt.trim() && !imageUri) {
       setErrorCode('validation');
       return;
     }
     setErrorCode(null);
-    // Honest: generation is not connected
     Alert.alert(
       i18n.t('create.generateButton'),
       i18n.t('create.notConnected')
@@ -78,16 +97,17 @@ export default function CreateScreen() {
       style={styles.container}
       contentContainerStyle={[styles.content, isDesktop && styles.desktopContent]}
     >
-      <Text style={[typography.subheading, styles.title, isRTL() && styles.rtlText]}>
+      <Text style={[typography.subheading, styles.title, rtl && styles.rtlText]}>
         {i18n.t('create.title')}
       </Text>
 
-      <View style={styles.field}>
-        <Text style={[typography.caption, styles.label, isRTL() && styles.rtlText]}>
+      {/* Idea / prompt */}
+      <View style={styles.section}>
+        <Text style={[typography.caption, styles.sectionLabel, rtl && styles.rtlText]}>
           {i18n.t('create.promptLabel')}
         </Text>
         <TextInput
-          style={[styles.input, isRTL() && styles.rtlInput]}
+          style={[styles.input, rtl && styles.rtlInput]}
           placeholder={i18n.t('create.promptPlaceholder')}
           placeholderTextColor={colors.textSecondary}
           value={prompt}
@@ -98,8 +118,9 @@ export default function CreateScreen() {
         />
       </View>
 
-      <View style={styles.field}>
-        <Text style={[typography.caption, styles.label, isRTL() && styles.rtlText]}>
+      {/* Optional reference image */}
+      <View style={styles.section}>
+        <Text style={[typography.caption, styles.sectionLabel, rtl && styles.rtlText]}>
           {i18n.t('create.uploadLabel')}
         </Text>
         <TouchableOpacity
@@ -111,17 +132,43 @@ export default function CreateScreen() {
           <Text style={styles.uploadButtonText}>{i18n.t('create.uploadButton')}</Text>
         </TouchableOpacity>
         {imageUri && (
-          <Image source={{ uri: imageUri }} style={styles.previewImage} accessibilityLabel={i18n.t('a11y.selectedImage')} />
+          <Image
+            source={{ uri: imageUri }}
+            style={styles.previewImage}
+            accessibilityLabel={i18n.t('a11y.selectedImage')}
+          />
         )}
       </View>
 
-      <View style={styles.field}>
-        <Text style={[typography.subheading, styles.label, isRTL() && styles.rtlText]}>
+      {/* Format & Style */}
+      <View style={styles.section}>
+        <Text style={[typography.subheading, styles.sectionLabel, rtl && styles.rtlText]}>
           {i18n.t('create.settingsTitle')}
         </Text>
-        <View style={styles.settingsRow}>
-          <Text style={[typography.caption, isRTL() && styles.rtlText]}>{i18n.t('create.durationLabel')}:</Text>
-          {(['15s', '30s', '60s'] as const).map((d) => (
+
+        <Text style={[typography.caption, styles.optionLabel, rtl && styles.rtlText]}>
+          {i18n.t('create.aspectLabel')}
+        </Text>
+        <View style={styles.chipRow}>
+          {(['9:16', '16:9', '1:1'] as Aspect[]).map((a) => (
+            <TouchableOpacity
+              key={a}
+              style={[styles.chip, aspect === a && styles.chipActive]}
+              onPress={() => setAspect(a)}
+              accessibilityRole="button"
+              accessibilityLabel={i18n.t('a11y.aspectChip', { value: a })}
+              accessibilityState={{ selected: aspect === a }}
+            >
+              <Text style={[styles.chipText, aspect === a && styles.chipTextActive]}>{a}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <Text style={[typography.caption, styles.optionLabel, rtl && styles.rtlText]}>
+          {i18n.t('create.durationLabel')}
+        </Text>
+        <View style={styles.chipRow}>
+          {(['15s', '30s', '60s'] as Duration[]).map((d) => (
             <TouchableOpacity
               key={d}
               style={[styles.chip, duration === d && styles.chipActive]}
@@ -134,9 +181,12 @@ export default function CreateScreen() {
             </TouchableOpacity>
           ))}
         </View>
-        <View style={styles.settingsRow}>
-          <Text style={[typography.caption, isRTL() && styles.rtlText]}>{i18n.t('create.styleLabel')}:</Text>
-          {(['cinematic', 'dynamic', 'minimal'] as const).map((s) => (
+
+        <Text style={[typography.caption, styles.optionLabel, rtl && styles.rtlText]}>
+          {i18n.t('create.styleLabel')}
+        </Text>
+        <View style={styles.chipRow}>
+          {(['cinematic', 'dynamic', 'minimal'] as Style[]).map((s) => (
             <TouchableOpacity
               key={s}
               style={[styles.chip, style === s && styles.chipActive]}
@@ -145,20 +195,39 @@ export default function CreateScreen() {
               accessibilityLabel={i18n.t('a11y.styleChip', { value: s })}
               accessibilityState={{ selected: style === s }}
             >
-              <Text style={[styles.chipText, style === s && styles.chipTextActive]}>{s}</Text>
+              <Text style={[styles.chipText, style === s && styles.chipTextActive]}>
+                {s === 'cinematic' ? (rtl ? 'سينمائي' : 'Cinematic') :
+                 s === 'dynamic' ? (rtl ? 'ديناميكي' : 'Dynamic') :
+                 (rtl ? 'بسيط' : 'Minimal')}
+              </Text>
             </TouchableOpacity>
           ))}
         </View>
       </View>
 
-      <View style={styles.previewArea}>
-        <Text style={[typography.subheading, styles.label, isRTL() && styles.rtlText]}>
+      {/* Local preview */}
+      <View style={styles.section}>
+        <Text style={[typography.subheading, styles.sectionLabel, rtl && styles.rtlText]}>
           {i18n.t('create.previewTitle')}
         </Text>
-        <View style={styles.previewPlaceholder}>
-          <Text style={[typography.body, styles.previewText, isRTL() && styles.rtlText]}>
-            {i18n.t('create.previewEmpty')}
-          </Text>
+        <View style={styles.previewBox}>
+          {imageUri ? (
+            <Image source={{ uri: imageUri }} style={styles.previewFull} resizeMode="cover" />
+          ) : (
+            <Text style={[typography.body, styles.previewEmpty, rtl && styles.rtlText]}>
+              {i18n.t('create.previewEmpty')}
+            </Text>
+          )}
+          {(prompt || imageUri) && (
+            <View style={styles.previewMeta}>
+              <Text style={[typography.caption, styles.previewMetaText, rtl && styles.rtlText]} numberOfLines={2}>
+                {prompt || (rtl ? 'صورة مرجعية' : 'Reference image')}
+              </Text>
+              <Text style={[typography.small, styles.previewMetaSub, rtl && styles.rtlText]}>
+                {aspect} · {duration} · {style}
+              </Text>
+            </View>
+          )}
         </View>
       </View>
 
@@ -169,15 +238,15 @@ export default function CreateScreen() {
       )}
 
       <TouchableOpacity
-        style={styles.generateButton}
-        onPress={handleGenerate}
+        style={styles.continueButton}
+        onPress={handleContinue}
         accessibilityRole="button"
         accessibilityLabel={i18n.t('create.generateButton')}
       >
-        <Text style={styles.generateButtonText}>{i18n.t('create.generateButton')}</Text>
+        <Text style={styles.continueButtonText}>{i18n.t('create.generateButton')}</Text>
       </TouchableOpacity>
 
-      <Text style={[typography.caption, styles.disclaimer, isRTL() && styles.rtlText]}>
+      <Text style={[typography.caption, styles.disclaimer, rtl && styles.rtlText]}>
         {i18n.t('create.notConnected')}
       </Text>
     </ScrollView>
@@ -190,7 +259,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
   content: {
-    padding: spacing.lg,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
     paddingBottom: spacing.xxl,
   },
   desktopContent: {
@@ -202,11 +272,16 @@ const styles = StyleSheet.create({
     color: colors.text,
     marginBottom: spacing.lg,
   },
-  field: {
+  section: {
     marginBottom: spacing.lg,
   },
-  label: {
+  sectionLabel: {
     color: colors.text,
+    marginBottom: spacing.sm,
+  },
+  optionLabel: {
+    color: colors.textSecondary,
+    marginTop: spacing.md,
     marginBottom: spacing.sm,
   },
   input: {
@@ -224,30 +299,30 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
   uploadButton: {
-    backgroundColor: colors.secondary,
+    backgroundColor: colors.surface,
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.lg,
     borderRadius: radii.md,
     alignSelf: 'flex-start',
     minHeight: 44,
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   uploadButtonText: {
     color: colors.text,
     fontWeight: '600',
   },
   previewImage: {
-    width: 120,
-    height: 120,
+    width: 100,
+    height: 100,
     borderRadius: radii.md,
     marginTop: spacing.md,
   },
-  settingsRow: {
+  chipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    alignItems: 'center',
     gap: spacing.sm,
-    marginBottom: spacing.sm,
   },
   chip: {
     paddingHorizontal: spacing.md,
@@ -256,7 +331,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surface,
-    minHeight: 44,
+    minHeight: 40,
     justifyContent: 'center',
   },
   chipActive: {
@@ -271,30 +346,46 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '600',
   },
-  previewArea: {
-    marginBottom: spacing.lg,
-  },
-  previewPlaceholder: {
-    height: 180,
+  previewBox: {
     backgroundColor: colors.surface,
-    borderRadius: radii.md,
+    borderRadius: radii.lg,
     borderWidth: 1,
     borderColor: colors.border,
-    borderStyle: 'dashed',
+    minHeight: 160,
+    overflow: 'hidden',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: spacing.md,
   },
-  previewText: {
+  previewFull: {
+    width: '100%',
+    height: 160,
+  },
+  previewEmpty: {
     color: colors.textSecondary,
     textAlign: 'center',
+    padding: spacing.md,
+  },
+  previewMeta: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(13,16,20,0.75)',
+    padding: spacing.sm,
+  },
+  previewMetaText: {
+    color: colors.text,
+  },
+  previewMetaSub: {
+    color: colors.textSecondary,
+    marginTop: 2,
   },
   errorText: {
     color: colors.error,
     marginBottom: spacing.md,
     textAlign: 'center',
   },
-  generateButton: {
+  continueButton: {
     backgroundColor: colors.primary,
     paddingVertical: spacing.md,
     borderRadius: radii.full,
@@ -303,9 +394,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: spacing.md,
   },
-  generateButtonText: {
+  continueButtonText: {
     color: '#FFFFFF',
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '600',
   },
   disclaimer: {

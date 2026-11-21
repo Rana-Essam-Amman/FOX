@@ -16,7 +16,8 @@ import { colors, spacing, typography, radii } from '../src/design/tokens';
 import { i18n, isRTL } from '../src/i18n';
 import { validateImageUpload } from '../src/utils/upload';
 import type { UploadErrorCode } from '../src/models';
-import { setLocalDraft, getLocalDraft, type Duration, type VisualStyle, type Aspect } from '../src/draft';
+import { setLocalDraft, type Duration, type VisualStyle, type Aspect } from '../src/draft';
+import { useLocalDraft } from '../src/hooks/useLocalDraft';
 
 export default function CreateScreen() {
   const { width } = useWindowDimensions();
@@ -27,23 +28,33 @@ export default function CreateScreen() {
   const promptRef = useRef<TextInput>(null);
   const imageModeTriggered = useRef(false);
 
-  const existingDraft = getLocalDraft();
+  const { draft: existingDraft, loaded } = useLocalDraft();
+  const appliedRef = useRef(false);
 
-  const initialPrompt = (() => {
-    if (existingDraft?.prompt) return existingDraft.prompt;
-    if (!params.concept) return '';
-    const key = `create.concepts.${params.concept}`;
-    const translated = i18n.t(key);
-    return translated === key ? '' : translated;
-  })();
-
-  const [prompt, setPrompt] = useState(initialPrompt);
-  const [imageUri, setImageUri] = useState<string | null>(existingDraft?.imageUri ?? null);
-  const [duration, setDuration] = useState<Duration>(existingDraft?.duration ?? '30s');
-  const [style, setStyle] = useState<VisualStyle>(existingDraft?.style ?? 'cinematic');
-  const [aspect, setAspect] = useState<Aspect>(existingDraft?.aspect ?? '9:16');
+  const [prompt, setPrompt] = useState('');
+  const [imageUri, setImageUri] = useState<string | null>(null);
+  const [duration, setDuration] = useState<Duration>('30s');
+  const [style, setStyle] = useState<VisualStyle>('cinematic');
+  const [aspect, setAspect] = useState<Aspect>('9:16');
   const [errorCode, setErrorCode] = useState<UploadErrorCode | 'validation' | null>(null);
   const [selectedConcept, setSelectedConcept] = useState<string | null>(params.concept ?? null);
+
+  useEffect(() => {
+    if (!loaded || appliedRef.current) return;
+    appliedRef.current = true;
+    if (existingDraft) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- hydrate once from async storage
+      setPrompt(existingDraft.prompt);
+      setImageUri(existingDraft.imageUri);
+      setDuration(existingDraft.duration);
+      setStyle(existingDraft.style);
+      setAspect(existingDraft.aspect);
+    } else if (params.concept) {
+      const key = `create.concepts.${params.concept}`;
+      const translated = i18n.t(key);
+      if (translated !== key) setPrompt(translated);
+    }
+  }, [loaded, existingDraft, params.concept]);
 
   const mode = params.mode;
 
@@ -103,13 +114,13 @@ export default function CreateScreen() {
     setPrompt(translated);
   };
 
-  const handleContinue = () => {
+  const handleContinue = async () => {
     if (!prompt.trim() && !imageUri) {
       setErrorCode('validation');
       return;
     }
     setErrorCode(null);
-    setLocalDraft({
+    await setLocalDraft({
       prompt: prompt.trim(),
       imageUri,
       duration,
@@ -315,7 +326,7 @@ export default function CreateScreen() {
 
       <TouchableOpacity
         style={styles.continueButton}
-        onPress={handleContinue}
+        onPress={() => void handleContinue()}
         accessibilityRole="button"
         accessibilityLabel={i18n.t('create.generateButton')}
       >

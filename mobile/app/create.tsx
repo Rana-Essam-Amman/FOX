@@ -16,7 +16,7 @@ import { colors, spacing, typography, radii } from '../src/design/tokens';
 import { i18n, isRTL } from '../src/i18n';
 import { validateImageUpload } from '../src/utils/upload';
 import type { UploadErrorCode } from '../src/models';
-import { setLocalDraft, type Duration, type VisualStyle, type Aspect } from '../src/draft';
+import { setLocalDraft, getLocalDraft, type Duration, type VisualStyle, type Aspect } from '../src/draft';
 
 export default function CreateScreen() {
   const { width } = useWindowDimensions();
@@ -27,7 +27,10 @@ export default function CreateScreen() {
   const promptRef = useRef<TextInput>(null);
   const imageModeTriggered = useRef(false);
 
+  const existingDraft = getLocalDraft();
+
   const initialPrompt = (() => {
+    if (existingDraft?.prompt) return existingDraft.prompt;
     if (!params.concept) return '';
     const key = `create.concepts.${params.concept}`;
     const translated = i18n.t(key);
@@ -35,10 +38,10 @@ export default function CreateScreen() {
   })();
 
   const [prompt, setPrompt] = useState(initialPrompt);
-  const [imageUri, setImageUri] = useState<string | null>(null);
-  const [duration, setDuration] = useState<Duration>('30s');
-  const [style, setStyle] = useState<VisualStyle>('cinematic');
-  const [aspect, setAspect] = useState<Aspect>('9:16');
+  const [imageUri, setImageUri] = useState<string | null>(existingDraft?.imageUri ?? null);
+  const [duration, setDuration] = useState<Duration>(existingDraft?.duration ?? '30s');
+  const [style, setStyle] = useState<VisualStyle>(existingDraft?.style ?? 'cinematic');
+  const [aspect, setAspect] = useState<Aspect>(existingDraft?.aspect ?? '9:16');
   const [errorCode, setErrorCode] = useState<UploadErrorCode | 'validation' | null>(null);
   const [selectedConcept, setSelectedConcept] = useState<string | null>(params.concept ?? null);
 
@@ -80,11 +83,11 @@ export default function CreateScreen() {
   }, [mode]);
 
   useEffect(() => {
-    if (mode === 'image' && !imageModeTriggered.current) {
+    if (mode === 'image' && !imageModeTriggered.current && !imageUri) {
       imageModeTriggered.current = true;
       void pickImage();
     }
-  }, [mode]);
+  }, [mode, imageUri]);
 
   const getErrorMessage = (code: UploadErrorCode | 'validation' | null): string | null => {
     if (!code) return null;
@@ -127,6 +130,22 @@ export default function CreateScreen() {
         {i18n.t('create.title')}
       </Text>
 
+      {mode === 'text' && (
+        <View style={styles.conceptBanner}>
+          <Text style={[typography.caption, styles.conceptBannerText, rtl && styles.rtlText]}>
+            {i18n.t('create.modeText')}
+          </Text>
+        </View>
+      )}
+
+      {mode === 'image' && (
+        <View style={styles.conceptBanner}>
+          <Text style={[typography.caption, styles.conceptBannerText, rtl && styles.rtlText]}>
+            {i18n.t('create.modeImage')}
+          </Text>
+        </View>
+      )}
+
       {selectedConcept && (
         <View style={styles.conceptBanner}>
           <Text style={[typography.caption, styles.conceptBannerText, rtl && styles.rtlText]}>
@@ -140,7 +159,7 @@ export default function CreateScreen() {
           <Text style={[typography.caption, styles.sectionLabel, rtl && styles.rtlText]}>
             {i18n.t('create.conceptChoose')}
           </Text>
-          <View style={styles.chipRow}>
+          <View style={[styles.chipRow, rtl && styles.chipRowRtl]}>
             {(['product', 'social', 'story'] as const).map((key) => (
               <TouchableOpacity
                 key={key}

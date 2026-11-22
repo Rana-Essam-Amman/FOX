@@ -284,34 +284,11 @@ def get_application() -> FastAPI:
 app = get_application()
 
 
-@app.middleware("http")
-async def protect_generated_task_files(request: Request, call_next):
-    """保护任务产物静态路由，防止绕过 API 鉴权直接下载。
-
-    ``/tasks`` 由 StaticFiles 独立挂载，无法复用 APIRouter 的依赖，
-    因此在中间件中调用同一个 verify_token。鉴权函数会在未配置
-    api_key 时放行；OPTIONS 预检请求也保留给 CORS 中间件处理。
-    """
-
-    request_path = request.url.path
-    is_task_file = request_path == "/tasks" or request_path.startswith("/tasks/")
-    if is_task_file and request.method != "OPTIONS":
-        try:
-            base.verify_token(request)
-        except HttpException as exception:
-            return exception_handler(request, exception)
-
-    return await call_next(request)
-
-
 # 默认遵循浏览器同源策略；仅在用户显式配置可信网页来源时开放跨域。
 cors_allowed_origins = parse_cors_allowed_origins(
     os.getenv("CORS_ALLOWED_ORIGINS", "")
 )
 configure_browser_access(app, cors_allowed_origins)
-
-task_dir = utils.task_dir()
-app.mount("/tasks", StaticFiles(directory=task_dir, html=True), name="")
 
 public_dir = utils.public_dir()
 app.mount("/", StaticFiles(directory=public_dir, html=True), name="")

@@ -129,8 +129,8 @@ class TestPartialBatchResults(unittest.TestCase):
         data = response["data"]
         self.assertEqual(data["state"], tm.const.TASK_STATE_FAILED)
         self.assertEqual(data["failed_video_index"], 2)
-        self.assertEqual(data["videos"], ["/tasks/partial-batch/final-1.mp4"])
-        self.assertEqual(data["combined_videos"], ["/tasks/partial-batch/combined-1.mp4"])
+        self.assertEqual(data["videos"], ["/api/v1/download/partial-batch/final-1.mp4"])
+        self.assertEqual(data["combined_videos"], ["/api/v1/download/partial-batch/combined-1.mp4"])
 
     def test_checkpoint_error_still_returns_the_completed_file(self):
         class FailOnceState(MemoryState):

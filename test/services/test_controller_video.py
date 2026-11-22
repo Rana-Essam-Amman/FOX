@@ -382,11 +382,11 @@ class TestVideoControllerTasks(unittest.TestCase):
                 )
 
             listed = response["data"]["tasks"][0]
-            expected_url = f"/tasks/{task_id}/final-1.mp4"
+            expected_url = f"/api/v1/download/{task_id}/final-1.mp4"
             self.assertEqual(listed["videos"], [expected_url])
             self.assertEqual(listed["combined_videos"], [expected_url])
-            self.assertEqual(listed["audio_file"], f"/tasks/{task_id}/audio.mp3")
-            self.assertEqual(listed["subtitle_path"], f"/tasks/{task_id}/subtitle.srt")
+            self.assertEqual(listed["audio_file"], f"/api/v1/download/{task_id}/audio.mp3")
+            self.assertEqual(listed["subtitle_path"], f"/api/v1/download/{task_id}/subtitle.srt")
             self.assertEqual(stored_task["videos"], [video_path])
             self.assertEqual(stored_task["audio_file"], audio_path)
         finally:
@@ -423,10 +423,10 @@ class TestVideoControllerTasks(unittest.TestCase):
 
             self.assertEqual(
                 response["data"]["videos"],
-                [f"/tasks/{task_id}/final-1.mp4"],
+                [f"/api/v1/download/{task_id}/final-1.mp4"],
             )
-            self.assertEqual(response["data"]["audio_file"], f"/tasks/{task_id}/audio.mp3")
-            self.assertEqual(response["data"]["subtitle_path"], f"/tasks/{task_id}/subtitle.srt")
+            self.assertEqual(response["data"]["audio_file"], f"/api/v1/download/{task_id}/audio.mp3")
+            self.assertEqual(response["data"]["subtitle_path"], f"/api/v1/download/{task_id}/subtitle.srt")
             self.assertNotIn("cross_post_owner", response["data"])
             self.assertIn("cross_post_owner", sm.state.get_task(task_id))
             self.assertEqual(sm.state.get_task(task_id)["videos"], [video_path])

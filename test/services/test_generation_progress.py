@@ -225,13 +225,13 @@ def test_changed_generation_settings_are_not_deduplicated(isolated_jobs):
 
 def test_preview_staging_paths_do_not_bypass_duplicate_guard(isolated_jobs):
     preview = {"script":"same script", "voice_name":"test-voice", "duration":3,
-               "voice_rate":1, "voice_volume":1, "audio_file":"/tasks/first/audio.mp3",
+               "voice_rate":1, "voice_volume":1, "audio_file":"/api/v1/download/first/audio.mp3",
                "audio_digest":"a" * 64}
     params = VideoParams(video_subject="same content")
     with patch.object(webui_task._task_manager, "add_task") as enqueue:
         first = webui_task.submit_generation("first", params, voice_preview=preview)
         second = webui_task.submit_generation("second", params,
-            voice_preview=dict(preview, audio_file="/tasks/second/audio.mp3"))
+            voice_preview=dict(preview, audio_file="/api/v1/download/second/audio.mp3"))
         third = webui_task.submit_generation("different-audio", params,
             voice_preview=dict(preview, duration=4))
     assert first == second

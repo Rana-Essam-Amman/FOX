@@ -135,7 +135,9 @@ def _task_file_to_uri(file: str, endpoint: str, task_dir: str, request_id: str) 
     relative_path = os.path.relpath(
         resolved_path, os.path.realpath(task_dir)
     ).replace("\\", "/")
-    uri_path = f"tasks/{quote(relative_path, safe='/')}"
+    # Private task outputs are served only through authenticated,
+    # ownership-checked endpoints. Static /tasks mount has been removed.
+    uri_path = f"api/v1/download/{quote(relative_path, safe='/')}"
     if endpoint:
         return f"{endpoint.rstrip('/')}/{uri_path}"
     return f"/{uri_path}"
@@ -242,6 +244,8 @@ def create_task(
 ):
     if user is None:
         user = require_authenticated_user(request)
+    from app.security.rate_limit import rate_limiter
+    rate_limiter.check_generation(user, base.get_task_id(request))
     task_id = utils.get_uuid()
     request_id = base.get_task_id(request)
     try:
@@ -286,7 +290,12 @@ def create_task(
             # 状态记录在调度前创建，默认标记为 processing。如果调度器没能
             # 接管任务（例如线程启动失败或 Redis 队列不可用），必须回滚该
             # 记录，否则 API 和 WebUI 会永久展示一个实际从未运行的任务。
+            # Also remove the ownership record so it cannot become an orphan.
             sm.state.delete_task(task_id)
+            try:
+                ownership_store.delete(task_id, user.sub)
+            except Exception as cleanup_exc:
+                logger.error(f"failed to clean ownership after queue failure, task_id={task_id}: {cleanup_exc}")
             raise
         logger.success(f"Task created: {utils.to_json(task)}")
         return utils.get_response(200, task)

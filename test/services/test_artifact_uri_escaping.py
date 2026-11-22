@@ -15,7 +15,7 @@ def test_task_artifact_uri_preserves_filename(filename, endpoint):
         parsed = urlsplit(uri)
         assert not parsed.query and not parsed.fragment
         assert " " not in parsed.path and "% " not in parsed.path
-        assert unquote(parsed.path).endswith("/tasks/task-1/" + filename)
+        assert unquote(parsed.path).endswith("/api/v1/download/task-1/" + filename)
 
 def test_remote_artifact_uri_is_not_reencoded():
     uri = "https://example.test/video.mp4?signature=unchanged%20value"

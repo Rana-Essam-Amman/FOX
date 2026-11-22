@@ -7,13 +7,11 @@ Fails closed if production configuration is incomplete.
 
 from __future__ import annotations
 
-import os
 
 from app.security.config_validation import is_production, validate_production_config
 
 
 def create_ownership_store():
-    from app.security.ownership import TaskOwnershipStore
     if is_production():
         validate_production_config()
         from app.security.adapters.postgres_ownership import PostgresOwnershipStore

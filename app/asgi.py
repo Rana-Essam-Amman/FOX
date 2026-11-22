@@ -14,7 +14,6 @@ from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 from app.config import config
-from app.controllers import base
 from app.models.exception import HttpException
 from app.router import root_api_router
 from app.utils import utils

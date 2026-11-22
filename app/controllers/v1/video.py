@@ -644,7 +644,7 @@ def upload_material(
                     metadata={"filename": safe_filename, "request_id": request_id},
                 )
             )
-        except Exception as ownership_exc:
+        except Exception:
             # Ownership failed after the file was written. Attempt to remove
             # only the file this request just created.
             if stored_path and os.path.isfile(stored_path):
@@ -662,7 +662,7 @@ def upload_material(
             status_code=400,
             message=f"{request_id}: {str(exc)}",
         )
-    except material_upload_service.MaterialServiceError as exc:
+    except material_upload_service.MaterialServiceError:
         raise HttpException(
             task_id=request_id,
             status_code=500,

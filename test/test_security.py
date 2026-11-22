@@ -1,6 +1,5 @@
 """Security isolation and authentication tests for the Phase D gateway."""
 
-import os
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 

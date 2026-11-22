@@ -2,10 +2,8 @@
 
 import os
 import pytest
-from datetime import datetime, timezone
 
 from app.security.config_validation import validate_production_config, ProductionConfigError
-from app.security.ownership import InMemoryOwnershipStore, TaskOwnershipRecord
 from app.security.jwt_auth import AuthenticatedUser
 
 

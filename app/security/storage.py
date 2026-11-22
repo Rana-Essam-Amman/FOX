@@ -6,7 +6,6 @@ server-side. Access always requires the authenticated owner.
 
 from __future__ import annotations
 
-import os
 import uuid
 from pathlib import Path
 

@@ -10,11 +10,12 @@ from __future__ import annotations
 import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from app.models.exception import HttpException
 from app.security.jwt_auth import AuthenticatedUser
+from app.security.runtime import create_ownership_store
 
 
 @dataclass(frozen=True)
@@ -76,9 +77,6 @@ class InMemoryOwnershipStore(TaskOwnershipStore):
             return True
 
 
-# Runtime store. Production instantiates PostgresOwnershipStore via runtime.create_ownership_store.
-# Tests and development use the in-memory adapter.
-from app.security.runtime import create_ownership_store
 ownership_store: TaskOwnershipStore = create_ownership_store()
 
 

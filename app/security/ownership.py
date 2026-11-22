@@ -76,20 +76,19 @@ class InMemoryOwnershipStore(TaskOwnershipStore):
             return True
 
 
-# Global store. Production deployments must replace this with a durable adapter
-# (SQLite, Postgres, etc.) before serving traffic. The default is memory-only.
-ownership_store: TaskOwnershipStore = InMemoryOwnershipStore()
+# Runtime store. Production instantiates PostgresOwnershipStore via runtime.create_ownership_store.
+# Tests and development use the in-memory adapter.
+from app.security.runtime import create_ownership_store
+ownership_store: TaskOwnershipStore = create_ownership_store()
 
 
 def require_task_owner(task_id: str, user: AuthenticatedUser) -> TaskOwnershipRecord:
-
     record = ownership_store.get(task_id)
     if record is None:
         raise HttpException(
             task_id=task_id, status_code=404, message="task not found"
         )
     if record.owner_id != user.sub:
-        # Do not reveal existence to non-owners.
         raise HttpException(
             task_id=task_id, status_code=404, message="task not found"
         )

@@ -1,7 +1,7 @@
 """Per-user rate limiting and quotas.
 
 The default implementation is process-local. Multi-worker production
-deployments must replace it with a shared store (Redis, etc.) or accept
+deployments must replace it with a shared store or accept
 that limits are not enforced across processes.
 
 Limits are intentionally conservative. Generation requests are more
@@ -24,7 +24,7 @@ class RateLimitConfig:
     requests_per_minute: int = 60
     generations_per_hour: int = 10
     concurrent_tasks: int = 2
-    max_upload_bytes: int = 10 * 1024 * 1024
+    max_upload_bytes: int = 50 * 1024 * 1024
 
 
 class InMemoryRateLimiter:
@@ -67,4 +67,6 @@ class InMemoryRateLimiter:
             timestamps.append(now)
 
 
-rate_limiter = InMemoryRateLimiter()
+# Runtime limiter. Production uses PostgresRateLimiter.
+from app.security.runtime import create_rate_limiter
+rate_limiter = create_rate_limiter()

@@ -17,7 +17,7 @@ from app.utils import utils
 
 
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
-MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # Supabase Free tier maximum
 
 
 def safe_object_name(prefix: str, extension: str) -> str:
@@ -51,7 +51,6 @@ def store_owned_material(
     """Store an upload and return a materialId owned by the user."""
     validate_upload(content_type, len(content), request_id)
     material_id = uuid.uuid4().hex
-    # Ownership record is the source of truth for access.
     ownership_store.create(
         TaskOwnershipRecord(
             task_id=material_id,
@@ -61,7 +60,6 @@ def store_owned_material(
             metadata={"content_type": content_type, "size": len(content)},
         )
     )
-    # Persist bytes under a non-guessable path. Production should use object storage.
     materials_dir = Path(utils.storage_dir("materials", create=True))
     path = materials_dir / material_id
     path.write_bytes(content)

@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - work/fox-unified-studio
 
 jobs:
   tests:
@@ -27,11 +28,25 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
+      postgres:
+        image: postgres:16-alpine
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: fox
+          POSTGRES_PASSWORD: fox
+          POSTGRES_DB: fox_test
+        options: >-
+          --health-cmd "pg_isready -U fox"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
 
     env:
       MPT_TEST_REDIS_HOST: 127.0.0.1
       MPT_TEST_REDIS_PORT: 6379
       MPT_TEST_REDIS_DB: 15
+      DATABASE_URL: postgresql://fox:fox@127.0.0.1:5432/fox_test
 
     steps:
       - name: Check out repository
@@ -57,14 +72,15 @@ jobs:
         if: matrix.python-version == '3.11'
         run: uv run --no-sync ruff check app cli.py main.py webui test docs/skill
 
+      - name: Apply security migrations
+        run: |
+          for f in migrations/001_task_ownership.sql migrations/002_rate_limit_counters.sql migrations/003_rls_policies.sql; do
+            psql "$DATABASE_URL" -f "$f"
+          done
+
       - name: Run unit tests with coverage
-        # pytest 兼容现有 unittest.TestCase，同时会收集仓库中的 pytest 风格
-        # 测试，避免测试文件已存在但 CI 没有真正执行。
         run: uv run --no-sync python -X utf8 -m coverage run -m pytest -q test
 
-      # Keep the legacy suite's portable media backend selection unchanged.
-      # Native project rendering is a separate mandatory pass after installing
-      # system tools; append its coverage before enforcing the shared threshold.
       - name: Install FFmpeg for native revision-rendering tests
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 

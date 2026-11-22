@@ -56,25 +56,34 @@ class TestVideoControllerHelpers(unittest.TestCase):
         from datetime import datetime, timezone
         from app.security.jwt_auth import AuthenticatedUser
 
+        import uuid
+
+        clip_name = f"{uuid.uuid4().hex}.mp4"
+        external_name = f"{uuid.uuid4().hex}.mp4"
+        broken_name = f"{uuid.uuid4().hex}.mp4"
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             material_dir = root / "materials"
             material_dir.mkdir()
-            (material_dir / "clip.mp4").write_bytes(b"video")
+            (material_dir / clip_name).write_bytes(b"video")
             external = root / "private.mp4"
             external.write_bytes(b"private contents")
             try:
-                (material_dir / "external.mp4").symlink_to(external)
-                (material_dir / "broken.mp4").symlink_to(root / "missing.mp4")
+                (material_dir / external_name).symlink_to(external)
+                (material_dir / broken_name).symlink_to(root / "missing.mp4")
             except (OSError, NotImplementedError) as exc:
                 self.skipTest(f"symlinks are unavailable: {exc}")
 
             store = InMemoryOwnershipStore()
-            for stored in ("clip.mp4", "external.mp4", "broken.mp4"):
+            for stored, display in (
+                (clip_name, "clip.mp4"),
+                (external_name, "external.mp4"),
+                (broken_name, "broken.mp4"),
+            ):
                 store.create(TaskOwnershipRecord(
                     task_id=stored, owner_id="user-a",
                     created_at=datetime.now(timezone.utc), kind="material",
-                    metadata={"filename": stored},
+                    metadata={"filename": display},
                 ))
             with patch.object(video_controller.utils, "storage_dir", return_value=str(material_dir)), \
                     patch.object(video_controller, "ownership_store", store), \
@@ -84,7 +93,7 @@ class TestVideoControllerHelpers(unittest.TestCase):
                 )
 
         self.assertEqual(response["data"]["files"], [
-            {"name": "clip.mp4", "size": 5, "file": "clip.mp4"}
+            {"name": "clip.mp4", "size": 5, "file": clip_name}
         ])
 
     def test_unowned_uppercase_material_is_not_listed(self):

@@ -340,7 +340,7 @@ class TestBackgroundMusicService(unittest.TestCase):
             "save_bgm_upload",
             return_value="4fca18fce7344f3aa824777a40d45c8c.mp3",
         ):
-            response = video_controller.upload_bgm_file(request, upload)
+            response = video_controller.upload_bgm_file(request, upload, user=SimpleNamespace(sub='test-user'))
         self.assertEqual(response["status"], 200)
         self.assertEqual(
             response["data"]["file"],
@@ -356,7 +356,7 @@ class TestBackgroundMusicService(unittest.TestCase):
                     bgm, "save_bgm_upload", side_effect=service_error
                 ):
                     with self.assertRaises(HttpException) as context:
-                        video_controller.upload_bgm_file(request, upload)
+                        video_controller.upload_bgm_file(request, upload, user=SimpleNamespace(sub='test-user'))
                 self.assertEqual(context.exception.status_code, expected_status)
 
     def test_resolve_and_list_prefer_uploaded_file_with_same_name(self):

@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from pydantic import ValidationError
@@ -40,7 +41,7 @@ class TestLlmController(unittest.TestCase):
             "generate_script",
             return_value="Generated script",
         ) as generate:
-            response = llm_controller.generate_video_script(None, body)
+            response = llm_controller.generate_video_script(SimpleNamespace(headers={'x-task-id': 'req-1'}), body, user=SimpleNamespace(sub='test-user'))
 
         self.assertEqual(
             response,

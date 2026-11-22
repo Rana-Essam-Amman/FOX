@@ -697,7 +697,7 @@ class TestVideoControllerFiles(unittest.TestCase):
             return_value="4fca18fce7344f3aa824777a40d45c8c.mov",
         ) as save_material:
             response = video_controller.upload_video_material_file(
-                self._request(), upload
+                self._request(), upload, user=SimpleNamespace(sub='test-user')
             )
 
         self.assertEqual(
@@ -717,7 +717,7 @@ class TestVideoControllerFiles(unittest.TestCase):
         ):
             with self.assertRaises(HttpException) as raised:
                 video_controller.upload_video_material_file(
-                    self._request(), invalid_upload
+                    self._request(), invalid_upload, user=SimpleNamespace(sub='test-user')
                 )
         self.assertEqual(raised.exception.status_code, 400)
 
@@ -731,7 +731,7 @@ class TestVideoControllerFiles(unittest.TestCase):
             ),
         ):
             with self.assertRaises(HttpException) as raised:
-                video_controller.upload_video_material_file(self._request(), upload)
+                video_controller.upload_video_material_file(self._request(), upload, user=SimpleNamespace(sub='test-user'))
 
         self.assertEqual(raised.exception.status_code, 500)
         self.assertNotIn("sensitive", raised.exception.message)

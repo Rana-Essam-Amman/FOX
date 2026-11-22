@@ -245,6 +245,7 @@ def create_task(
     if user is None:
         user = require_authenticated_user(request)
     from app.security.rate_limit import rate_limiter
+    rate_limiter.check_request(user, base.get_task_id(request))
     rate_limiter.check_generation(user, base.get_task_id(request))
     task_id = utils.get_uuid()
     request_id = base.get_task_id(request)
@@ -273,15 +274,28 @@ def create_task(
             "params": body.model_dump(),
         }
         sm.state.update_task(task_id)
-        ownership_store.create(
-            TaskOwnershipRecord(
-                task_id=task_id,
-                owner_id=user.sub,
-                created_at=datetime.now(timezone.utc),
-                kind=stop_at,
-                metadata={"request_id": request_id},
+        try:
+            ownership_store.create(
+                TaskOwnershipRecord(
+                    task_id=task_id,
+                    owner_id=user.sub,
+                    created_at=datetime.now(timezone.utc),
+                    kind=stop_at,
+                    metadata={"request_id": request_id},
+                )
             )
-        )
+        except Exception:
+            # Ownership must exist before the task can be admitted to the queue.
+            # If durable ownership persistence fails, roll back the state record
+            # so we never leave an ownerless processing task.
+            try:
+                sm.state.delete_task(task_id)
+            except Exception as cleanup_exc:
+                logger.error(
+                    f"failed to clean task state after ownership failure, "
+                    f"task_id={task_id}: {cleanup_exc}"
+                )
+            raise
         try:
             task_manager.add_task(
                 tm.start, task_id=task_id, params=body, stop_at=stop_at
@@ -447,7 +461,15 @@ def get_bgm_list(request: Request):
         500: {"description": "FFmpeg validation or persistent storage is unavailable"},
     },
 )
-def upload_bgm_file(request: Request, file: UploadFile = File(...)):
+def upload_bgm_file(
+    request: Request,
+    file: UploadFile = File(...),
+    user=None,
+):
+    if user is None:
+        user = require_authenticated_user(request)
+    from app.security.rate_limit import rate_limiter
+    rate_limiter.check_request(user, base.get_task_id(request))
     request_id = base.get_task_id(request)
     try:
         safe_filename = bgm_service.save_bgm_upload(file.filename, file.file)
@@ -516,7 +538,15 @@ def get_video_materials_list(request: Request):
     response_model=VideoMaterialUploadResponse,
     summary="Upload the video material file to the local videos directory",
 )
-def upload_video_material_file(request: Request, file: UploadFile = File(...)):
+def upload_video_material_file(
+    request: Request,
+    file: UploadFile = File(...),
+    user=None,
+):
+    if user is None:
+        user = require_authenticated_user(request)
+    from app.security.rate_limit import rate_limiter
+    rate_limiter.check_request(user, base.get_task_id(request))
     request_id = base.get_task_id(request)
     try:
         # Keep accepting browser-supplied client paths, but persist an immutable
@@ -548,6 +578,65 @@ def upload_video_material_file(request: Request, file: UploadFile = File(...)):
 
     response = {"file": stored_filename}
     return utils.get_response(200, response)
+
+
+@router.post(
+    "/materials",
+    summary="Upload a private material (image or video) and return a material id",
+)
+def upload_material(
+    request: Request,
+    file: UploadFile = File(...),
+    user=Depends(require_authenticated_user),
+):
+    """Authenticated material upload. Owner is derived from the JWT subject.
+    Returns material_id expected by the mobile client. Uses the existing
+    validated material upload service (200 MiB video / 20 MiB image) and
+    records an ownership entry so later retrieval can be owner-checked.
+    """
+    from app.security.rate_limit import rate_limiter
+    rate_limiter.check_request(user, base.get_task_id(request))
+    request_id = base.get_task_id(request)
+    try:
+        safe_filename = _sanitize_upload_filename(file.filename, request_id)
+        stored_filename = material_upload_service.save_material_upload(
+            safe_filename, file.file
+        )
+        # Record ownership for the stored material so cross-user access can be denied.
+        ownership_store.create(
+            TaskOwnershipRecord(
+                task_id=stored_filename,
+                owner_id=user.sub,
+                created_at=datetime.now(timezone.utc),
+                kind="material",
+                metadata={"filename": safe_filename, "request_id": request_id},
+            )
+        )
+    except material_upload_service.MaterialUploadError as exc:
+        raise HttpException(
+            task_id=request_id,
+            status_code=400,
+            message=f"{request_id}: {str(exc)}",
+        )
+    except material_upload_service.MaterialServiceError as exc:
+        raise HttpException(
+            task_id=request_id,
+            status_code=500,
+            message=f"{request_id}: local material validation is unavailable",
+        )
+    # Best-effort size; mobile tolerates missing size/content_type.
+    try:
+        size = os.path.getsize(
+            os.path.join(utils.storage_dir("local_videos"), stored_filename)
+        )
+    except OSError:
+        size = None
+    return utils.get_response(200, {
+        "material_id": stored_filename,
+        "content_type": file.content_type,
+        "size": size,
+    })
+
 
 @router.get("/stream/{file_path:path}")
 @router.head("/stream/{file_path:path}", summary="Inspect video stream metadata")

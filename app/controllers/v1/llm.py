@@ -14,6 +14,7 @@ from app.models.schema import (
 from app.services import llm
 from app.utils import utils
 from app.security import require_authenticated_user
+from app.security.rate_limit import rate_limiter
 
 # LLM endpoints use the same JWT authentication as the video routes.
 router = new_router(dependencies=[Depends(require_authenticated_user)])
@@ -24,7 +25,10 @@ router = new_router(dependencies=[Depends(require_authenticated_user)])
     response_model=VideoScriptResponse,
     summary="Create a script for the video",
 )
-def generate_video_script(request: Request, body: VideoScriptRequest):
+def generate_video_script(request: Request, body: VideoScriptRequest, user=None):
+    if user is None:
+        user = require_authenticated_user(request)
+    rate_limiter.check_request(user, base.get_task_id(request))
     video_script = llm.generate_script(
         video_subject=body.video_subject,
         language=body.video_language,
@@ -46,7 +50,10 @@ def generate_video_script(request: Request, body: VideoScriptRequest):
     response_model=VideoTermsResponse,
     summary="Generate video terms based on the video script",
 )
-def generate_video_terms(request: Request, body: VideoTermsRequest):
+def generate_video_terms(request: Request, body: VideoTermsRequest, user=None):
+    if user is None:
+        user = require_authenticated_user(request)
+    rate_limiter.check_request(user, base.get_task_id(request))
     video_terms = llm.generate_terms(
         video_subject=body.video_subject,
         video_script=body.video_script,
@@ -68,8 +75,13 @@ def generate_video_terms(request: Request, body: VideoTermsRequest):
     summary="Generate social publishing metadata",
 )
 def generate_video_social_metadata(
-    request: Request, body: VideoSocialMetadataRequest
+    request: Request,
+    body: VideoSocialMetadataRequest,
+    user=None,
 ):
+    if user is None:
+        user = require_authenticated_user(request)
+    rate_limiter.check_request(user, base.get_task_id(request))
     metadata = llm.generate_social_metadata(
         video_subject=body.video_subject,
         video_script=body.video_script,

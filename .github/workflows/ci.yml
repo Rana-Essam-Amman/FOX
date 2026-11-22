@@ -72,6 +72,17 @@ jobs:
         if: matrix.python-version == '3.11'
         run: uv run --no-sync ruff check app cli.py main.py webui test docs/skill
 
+      - name: Verify database target
+        run: |
+          python - <<'PY'
+          import os
+          from urllib.parse import urlparse
+          url = os.environ["DATABASE_URL"]
+          name = urlparse(url).path.lstrip("/")
+          print(f"resolved database name: {name}")
+          assert name == "fox_test", f"expected fox_test, got {name}"
+          PY
+
       - name: Apply security migrations
         run: |
           set -e

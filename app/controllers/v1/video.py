@@ -15,6 +15,8 @@ from app.config import config
 from app.controllers import base
 from app.security import require_authenticated_user, require_task_owner, ownership_store, TaskOwnershipRecord
 from app.security.private_materials import list_owned_materials, record_owned_material
+from app.security.material_admission import MaterialAdmissionError, admit_video_materials
+from app.security.material_resolution import MaterialNotFound
 from datetime import datetime, timezone
 from app.controllers.manager.base_manager import TaskQueueFullError
 from app.controllers.manager.memory_manager import InMemoryTaskManager
@@ -248,30 +250,31 @@ def create_task(
     from app.security.rate_limit import rate_limiter
     rate_limiter.check_request(user, base.get_task_id(request))
     rate_limiter.check_generation(user, base.get_task_id(request))
-    # Resolve a mobile-supplied material_id into the local material pipeline
-    # before the task is admitted. Ownership is checked against the authenticated
-    # principal; foreign or missing materials are rejected with 404.
-    if (
-        stop_at == "video"
-        and isinstance(body, TaskVideoRequest)
-        and getattr(body, "material_id", None)
-    ):
-        record = ownership_store.get(body.material_id)
-        if (
-            record is None
-            or record.owner_id != user.sub
-            or record.kind != "material"
-        ):
+    # Every local material reference (material_id and each video_materials
+    # entry) is resolved against the authenticated owner before admission.
+    # Any foreign, unowned, unknown or malformed reference rejects the request.
+    if stop_at == "video" and isinstance(body, TaskVideoRequest):
+        try:
+            body.video_source, body.video_materials = admit_video_materials(
+                video_source=body.video_source,
+                material_id=body.material_id,
+                materials=body.video_materials,
+                owner_id=user.sub,
+                storage_dir=utils.storage_dir("local_videos", create=True),
+                lookup=ownership_store.get,
+            )
+        except MaterialNotFound:
             raise HttpException(
                 task_id=base.get_task_id(request),
                 status_code=404,
                 message="material not found",
             )
-        from app.models.schema import MaterialInfo
-        body.video_source = "local"
-        body.video_materials = [
-            MaterialInfo(provider="local", url=body.material_id)
-        ]
+        except MaterialAdmissionError as exc:
+            raise HttpException(
+                task_id=base.get_task_id(request),
+                status_code=400,
+                message=str(exc),
+            )
     task_id = utils.get_uuid()
     request_id = base.get_task_id(request)
     try:

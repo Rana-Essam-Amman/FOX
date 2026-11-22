@@ -14,7 +14,7 @@ def test_production_requires_supabase_credentials(monkeypatch):
     monkeypatch.setenv("FOX_OIDC_ISSUER", "https://example.supabase.co/auth/v1")
     monkeypatch.setenv("FOX_OIDC_AUDIENCE", "authenticated")
     monkeypatch.setenv("FOX_OIDC_JWKS_URL", "https://example.supabase.co/auth/v1/.well-known/jwks.json")
-    monkeypatch.setenv("DATABASE_URL", "postgresql://localhost/fox")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://fox:fox@127.0.0.1:5432/fox_test")
     monkeypatch.delenv("SUPABASE_URL", raising=False)
     monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
     with pytest.raises(ProductionConfigError):

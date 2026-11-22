@@ -40,7 +40,7 @@ class TestVideoControllerHelpers(unittest.TestCase):
     def test_sanitize_upload_filename_removes_client_path(self):
         """Windows 和 POSIX 客户端路径都只能保留最后一段安全文件名。"""
         for filename, expected in (
-            (r"C:\videos\clip.MOV", "clip.MOV"),
+            (r"C:videosclip.MOV", "clip.MOV"),
             ("../../images/photo.png", "photo.png"),
         ):
             with self.subTest(filename=filename):
@@ -688,7 +688,7 @@ class TestVideoControllerFiles(unittest.TestCase):
     def test_upload_video_material_validates_complete_extension(self):
         """大写合法扩展名应接受，无点号伪扩展名应拒绝。"""
         upload = SimpleNamespace(
-            filename=r"C:\videos\clip.MOV",
+            filename=r"C:videosclip.MOV",
             file=BytesIO(b"video"),
         )
         with patch.object(
@@ -727,7 +727,7 @@ class TestVideoControllerFiles(unittest.TestCase):
             material_upload,
             "save_material_upload",
             side_effect=material_upload.MaterialServiceError(
-                "C:\\sensitive\\storage is unavailable"
+                "C:sensitivestorage is unavailable"
             ),
         ):
             with self.assertRaises(HttpException) as raised:
@@ -918,3 +918,40 @@ class TestBuildRedisUrl(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestMaterialCompensation(unittest.TestCase):
+    def _user(self, sub="owner-a"):
+        return SimpleNamespace(sub=sub)
+
+    def _request(self):
+        return SimpleNamespace(headers={"x-task-id": "req-mat"})
+
+    def test_ownership_failure_cleans_up_new_file(self):
+        from app.security.ownership import ownership_store
+        upload = SimpleNamespace(filename="clip.mp4", file=BytesIO(b"video"), content_type="video/mp4")
+        with tempfile.TemporaryDirectory() as tmp:
+            stored = "abc123.mp4"
+            path = Path(tmp) / stored
+            path.write_bytes(b"data")
+            with patch.object(video_controller.material_upload_service, "save_material_upload", return_value=stored), patch.object(video_controller.utils, "storage_dir", return_value=tmp), patch.object(ownership_store, "create", side_effect=RuntimeError("db down")):
+                with self.assertRaises(RuntimeError):
+                    video_controller.upload_material(self._request(), upload, user=self._user())
+            self.assertFalse(path.exists())
+
+    def test_delete_preserves_ownership_on_object_failure(self):
+        from app.security.ownership import ownership_store, TaskOwnershipRecord
+        from datetime import datetime, timezone
+        material_id = "mat-1"
+        record = TaskOwnershipRecord(
+            task_id=material_id,
+            owner_id="owner-a",
+            created_at=datetime.now(timezone.utc),
+            kind="material",
+            metadata={},
+        )
+        with patch.object(ownership_store, "get", return_value=record), patch.object(video_controller.os.path, "isfile", return_value=True), patch.object(video_controller.os, "remove", side_effect=OSError("disk full")), patch.object(ownership_store, "delete") as del_mock:
+            with self.assertRaises(HttpException) as raised:
+                video_controller.delete_material(self._request(), material_id, user=self._user())
+            self.assertEqual(raised.exception.status_code, 503)
+            del_mock.assert_not_called()

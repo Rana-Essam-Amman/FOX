@@ -28,10 +28,9 @@ router = new_router(dependencies=[Depends(require_authenticated_user)])
 def generate_video_script(request: Request, body: VideoScriptRequest, user=None):
     if user is None:
         user = require_authenticated_user(request)
-    rate_limiter.check_request(user, base.get_task_id(request))
-    rate_limiter.check_generation(user, base.get_task_id(request))
-    rate_limiter.check_generation(user, base.get_task_id(request))
-    rate_limiter.check_generation(user, base.get_task_id(request))
+    request_id = base.get_task_id(request)
+    rate_limiter.check_request(user, request_id)
+    rate_limiter.check_generation(user, request_id)
     video_script = llm.generate_script(
         video_subject=body.video_subject,
         language=body.video_language,
@@ -56,7 +55,9 @@ def generate_video_script(request: Request, body: VideoScriptRequest, user=None)
 def generate_video_terms(request: Request, body: VideoTermsRequest, user=None):
     if user is None:
         user = require_authenticated_user(request)
-    rate_limiter.check_request(user, base.get_task_id(request))
+    request_id = base.get_task_id(request)
+    rate_limiter.check_request(user, request_id)
+    rate_limiter.check_generation(user, request_id)
     video_terms = llm.generate_terms(
         video_subject=body.video_subject,
         video_script=body.video_script,
@@ -84,7 +85,9 @@ def generate_video_social_metadata(
 ):
     if user is None:
         user = require_authenticated_user(request)
-    rate_limiter.check_request(user, base.get_task_id(request))
+    request_id = base.get_task_id(request)
+    rate_limiter.check_request(user, request_id)
+    rate_limiter.check_generation(user, request_id)
     metadata = llm.generate_social_metadata(
         video_subject=body.video_subject,
         video_script=body.video_script,

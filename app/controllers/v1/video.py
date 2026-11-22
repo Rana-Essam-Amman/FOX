@@ -617,25 +617,45 @@ def upload_material(
     Returns material_id expected by the mobile client. Uses the existing
     validated material upload service (200 MiB video / 20 MiB image) and
     records an ownership entry so later retrieval can be owner-checked.
+    If ownership persistence fails after the file is saved, the newly
+    created file is deleted. Cleanup failure is logged; the original
+    ownership exception is re-raised. Not atomic across filesystem and
+    ownership storage.
     """
     from app.security.rate_limit import rate_limiter
     rate_limiter.check_request(user, base.get_task_id(request))
     request_id = base.get_task_id(request)
+    stored_filename = None
+    stored_path = None
     try:
         safe_filename = _sanitize_upload_filename(file.filename, request_id)
         stored_filename = material_upload_service.save_material_upload(
             safe_filename, file.file
         )
+        stored_path = os.path.join(utils.storage_dir("local_videos"), stored_filename)
         # Record ownership for the stored material so cross-user access can be denied.
-        ownership_store.create(
-            TaskOwnershipRecord(
-                task_id=stored_filename,
-                owner_id=user.sub,
-                created_at=datetime.now(timezone.utc),
-                kind="material",
-                metadata={"filename": safe_filename, "request_id": request_id},
+        try:
+            ownership_store.create(
+                TaskOwnershipRecord(
+                    task_id=stored_filename,
+                    owner_id=user.sub,
+                    created_at=datetime.now(timezone.utc),
+                    kind="material",
+                    metadata={"filename": safe_filename, "request_id": request_id},
+                )
             )
-        )
+        except Exception as ownership_exc:
+            # Ownership failed after the file was written. Attempt to remove
+            # only the file this request just created.
+            if stored_path and os.path.isfile(stored_path):
+                try:
+                    os.remove(stored_path)
+                except OSError as cleanup_exc:
+                    logger.error(
+                        f"failed to clean material file after ownership failure, "
+                        f"request_id={request_id}, material={stored_filename}: {cleanup_exc}"
+                    )
+            raise ownership_exc
     except material_upload_service.MaterialUploadError as exc:
         raise HttpException(
             task_id=request_id,
@@ -650,9 +670,7 @@ def upload_material(
         )
     # Best-effort size; mobile tolerates missing size/content_type.
     try:
-        size = os.path.getsize(
-            os.path.join(utils.storage_dir("local_videos"), stored_filename)
-        )
+        size = os.path.getsize(stored_path) if stored_path else None
     except OSError:
         size = None
     return utils.get_response(200, {
@@ -685,22 +703,46 @@ def delete_material(
     material_id: str = Path(...),
     user=Depends(require_authenticated_user),
 ):
-    """Delete a material only if the caller is the owner."""
+    """Delete a material only if the caller is the owner.
+    Object is removed first; ownership record is deleted only after
+    successful object removal. Failure of either step is not reported
+    as success.
+    """
+    request_id = base.get_task_id(request)
     record = ownership_store.get(material_id)
     if record is None or record.owner_id != user.sub or record.kind != "material":
         raise HttpException(
-            task_id=base.get_task_id(request),
+            task_id=request_id,
             status_code=404,
             message="material not found",
         )
-    # Best-effort file removal; ownership record is the authorization boundary.
+    # Object deletion first. Ownership record stays if this fails.
+    path = os.path.join(utils.storage_dir("local_videos"), material_id)
     try:
-        path = os.path.join(utils.storage_dir("local_videos"), material_id)
         if os.path.isfile(path):
             os.remove(path)
     except OSError as exc:
-        logger.warning(f"failed to remove material file {material_id}: {exc}")
-    ownership_store.delete(material_id, user.sub)
+        logger.error(
+            f"material object deletion failed, request_id={request_id}, "
+            f"material={material_id}: {exc}"
+        )
+        raise HttpException(
+            task_id=request_id,
+            status_code=503,
+            message="material deletion failed; retry later",
+        )
+    # Ownership record only after object is gone.
+    deleted = ownership_store.delete(material_id, user.sub)
+    if not deleted:
+        logger.error(
+            f"ownership delete returned false after object removal, "
+            f"request_id={request_id}, material={material_id}"
+        )
+        raise HttpException(
+            task_id=request_id,
+            status_code=503,
+            message="material deletion incomplete; retry later",
+        )
     return utils.get_response(200, {"deleted": material_id})
 
 

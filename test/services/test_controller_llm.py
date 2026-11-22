@@ -112,5 +112,35 @@ class TestLlmController(unittest.TestCase):
         )
 
 
+
+class TestLlmRateLimit(unittest.TestCase):
+    def _user(self, sub="user-a"):
+        return SimpleNamespace(sub=sub)
+
+    def _request(self):
+        return SimpleNamespace(headers={"x-task-id": "req-1"})
+
+    def test_script_consumes_one_generation(self):
+        body = VideoScriptRequest(video_subject="x")
+        with patch.object(llm_controller.rate_limiter, "check_request") as cr, patch.object(llm_controller.rate_limiter, "check_generation") as cg, patch.object(llm_controller.llm, "generate_script", return_value="ok"):
+            llm_controller.generate_video_script(self._request(), body, user=self._user())
+        self.assertEqual(cr.call_count, 1)
+        self.assertEqual(cg.call_count, 1)
+
+    def test_terms_consumes_one_generation(self):
+        body = VideoTermsRequest(video_subject="x", video_script="s", amount=3)
+        with patch.object(llm_controller.rate_limiter, "check_request") as cr, patch.object(llm_controller.rate_limiter, "check_generation") as cg, patch.object(llm_controller.llm, "generate_terms", return_value=["t"]):
+            llm_controller.generate_video_terms(self._request(), body, user=self._user())
+        self.assertEqual(cr.call_count, 1)
+        self.assertEqual(cg.call_count, 1)
+
+    def test_social_metadata_consumes_one_generation(self):
+        body = VideoSocialMetadataRequest(video_subject="x", video_script="s")
+        with patch.object(llm_controller.rate_limiter, "check_request") as cr, patch.object(llm_controller.rate_limiter, "check_generation") as cg, patch.object(llm_controller.llm, "generate_social_metadata", return_value={"title": "t"}):
+            llm_controller.generate_video_social_metadata(self._request(), body, user=self._user())
+        self.assertEqual(cr.call_count, 1)
+        self.assertEqual(cg.call_count, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -40,7 +40,7 @@ class TestVideoControllerHelpers(unittest.TestCase):
     def test_sanitize_upload_filename_removes_client_path(self):
         """Windows 和 POSIX 客户端路径都只能保留最后一段安全文件名。"""
         for filename, expected in (
-            (r"C:\\videos\\clip.MOV", "clip.MOV"),
+            (r"C:\videos\clip.MOV", "clip.MOV"),
             ("../../images/photo.png", "photo.png"),
         ):
             with self.subTest(filename=filename):
@@ -688,7 +688,7 @@ class TestVideoControllerFiles(unittest.TestCase):
     def test_upload_video_material_validates_complete_extension(self):
         """大写合法扩展名应接受，无点号伪扩展名应拒绝。"""
         upload = SimpleNamespace(
-            filename=r"C:\\videos\\clip.MOV",
+            filename=r"C:\videos\clip.MOV",
             file=BytesIO(b"video"),
         )
         with patch.object(

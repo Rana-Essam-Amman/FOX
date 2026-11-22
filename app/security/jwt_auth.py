@@ -14,6 +14,7 @@ import jwt
 from jwt import PyJWKClient
 from loguru import logger
 
+from fastapi import Request
 from app.models.exception import HttpException
 from app.controllers.base import get_task_id
 
@@ -108,7 +109,7 @@ class JWTVerifier:
 jwt_verifier = JWTVerifier()
 
 
-def require_authenticated_user(request) -> AuthenticatedUser:
+def require_authenticated_user(request: Request) -> AuthenticatedUser:
     """FastAPI dependency that extracts and verifies a Bearer token."""
     request_id = get_task_id(request)
     auth_header = request.headers.get("authorization") or request.headers.get("Authorization")

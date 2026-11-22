@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Callable
-from typing import Protocol
+from typing import Protocol, TypeGuard
 
 from app.utils.file_security import resolve_path_within_directory
 
@@ -32,7 +32,7 @@ class OwnershipRecordLike(Protocol):
 OwnershipLookup = Callable[[str], OwnershipRecordLike | None]
 
 
-def is_stored_material_name(name: object) -> bool:
+def is_stored_material_name(name: object) -> TypeGuard[str]:
     return isinstance(name, str) and _STORED_NAME_RE.fullmatch(name) is not None
 
 
@@ -51,7 +51,7 @@ def resolve_owned_material(
     """
     if not owner_id or not is_stored_material_name(reference):
         raise MaterialNotFound("material not found")
-    record = lookup(reference)  # type: ignore[arg-type]
+    record = lookup(reference)
     if record is None or record.kind != "material" or record.owner_id != owner_id:
         raise MaterialNotFound("material not found")
     try:

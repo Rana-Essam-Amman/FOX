@@ -30,8 +30,12 @@ def validate_production_config() -> None:
         missing.append("FOX_OIDC_JWKS_URL")
     if not os.getenv("DATABASE_URL"):
         missing.append("DATABASE_URL")
-    if not os.getenv("REDIS_URL"):
-        missing.append("REDIS_URL")
+    # Redis is no longer required. Rate limiting uses PostgreSQL.
+    # Supabase Storage credentials are required for production media.
+    if not os.getenv("SUPABASE_URL"):
+        missing.append("SUPABASE_URL")
+    if not os.getenv("SUPABASE_SERVICE_ROLE_KEY"):
+        missing.append("SUPABASE_SERVICE_ROLE_KEY")
 
     if missing:
         raise ProductionConfigError(

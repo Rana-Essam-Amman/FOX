@@ -16,7 +16,7 @@ def test_production_selects_postgres_and_supabase(monkeypatch):
     monkeypatch.setenv("FOX_OIDC_ISSUER", "https://example.supabase.co/auth/v1")
     monkeypatch.setenv("FOX_OIDC_AUDIENCE", "authenticated")
     monkeypatch.setenv("FOX_OIDC_JWKS_URL", "https://example.supabase.co/auth/v1/.well-known/jwks.json")
-    monkeypatch.setenv("DATABASE_URL", "postgresql://localhost/fox")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://fox:fox@127.0.0.1:5432/fox_test")
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "test-key")
     store = create_ownership_store()

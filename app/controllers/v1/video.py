@@ -148,5 +148,11 @@ async def upload_material(
     request_id = base.get_task_id(request)
     rate_limiter.check_request(user, request_id)
     content = await file.read()
-    material_id = store_owned_material(user, content, file.content_type, request_id)
+    # Use the runtime storage adapter. In production this is SupabaseStorageAdapter.
+    from app.security.runtime import create_storage
+    storage = create_storage()
+    if hasattr(storage, "put_owned"):
+        material_id = storage.put_owned(user, content, file.content_type, request_id)
+    else:
+        material_id = store_owned_material(user, content, file.content_type, request_id)
     return utils.get_response(200, {"material_id": material_id, "content_type": file.content_type, "size": len(content)})

@@ -247,6 +247,30 @@ def create_task(
     from app.security.rate_limit import rate_limiter
     rate_limiter.check_request(user, base.get_task_id(request))
     rate_limiter.check_generation(user, base.get_task_id(request))
+    # Resolve a mobile-supplied material_id into the local material pipeline
+    # before the task is admitted. Ownership is checked against the authenticated
+    # principal; foreign or missing materials are rejected with 404.
+    if (
+        stop_at == "video"
+        and isinstance(body, TaskVideoRequest)
+        and getattr(body, "material_id", None)
+    ):
+        record = ownership_store.get(body.material_id)
+        if (
+            record is None
+            or record.owner_id != user.sub
+            or record.kind != "material"
+        ):
+            raise HttpException(
+                task_id=base.get_task_id(request),
+                status_code=404,
+                message="material not found",
+            )
+        from app.models.schema import MaterialInfo
+        body.video_source = "local"
+        body.video_materials = [
+            MaterialInfo(provider="local", url=body.material_id)
+        ]
     task_id = utils.get_uuid()
     request_id = base.get_task_id(request)
     try:
@@ -636,6 +660,48 @@ def upload_material(
         "content_type": file.content_type,
         "size": size,
     })
+
+
+@router.get("/materials", summary="List materials owned by the authenticated user")
+def list_materials(request: Request, user=Depends(require_authenticated_user)):
+    """Return only materials owned by the authenticated principal."""
+    owned = ownership_store.list_for_owner(user.sub, limit=200)
+    materials = [
+        {
+            "material_id": r.task_id,
+            "filename": (r.metadata or {}).get("filename"),
+            "size": (r.metadata or {}).get("size"),
+            "content_type": (r.metadata or {}).get("content_type"),
+        }
+        for r in owned
+        if r.kind == "material"
+    ]
+    return utils.get_response(200, {"materials": materials})
+
+
+@router.delete("/materials/{material_id}", summary="Delete an owned material")
+def delete_material(
+    request: Request,
+    material_id: str = Path(...),
+    user=Depends(require_authenticated_user),
+):
+    """Delete a material only if the caller is the owner."""
+    record = ownership_store.get(material_id)
+    if record is None or record.owner_id != user.sub or record.kind != "material":
+        raise HttpException(
+            task_id=base.get_task_id(request),
+            status_code=404,
+            message="material not found",
+        )
+    # Best-effort file removal; ownership record is the authorization boundary.
+    try:
+        path = os.path.join(utils.storage_dir("local_videos"), material_id)
+        if os.path.isfile(path):
+            os.remove(path)
+    except OSError as exc:
+        logger.warning(f"failed to remove material file {material_id}: {exc}")
+    ownership_store.delete(material_id, user.sub)
+    return utils.get_response(200, {"deleted": material_id})
 
 
 @router.get("/stream/{file_path:path}")

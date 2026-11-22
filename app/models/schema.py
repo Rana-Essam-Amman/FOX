@@ -125,6 +125,9 @@ class VideoParams(BaseModel):
     video_materials: Optional[List[MaterialInfo]] = (
         None  # Materials used to generate the video
     )
+    # Explicit material ID supplied by the mobile client. Resolved to an
+    # owned local material before the task is admitted to the queue.
+    material_id: Optional[str] = None
 
     custom_audio_file: Optional[str] = (
         None  # Custom audio file path, will ignore TTS and can still use Whisper subtitles

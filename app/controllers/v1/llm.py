@@ -29,6 +29,9 @@ def generate_video_script(request: Request, body: VideoScriptRequest, user=None)
     if user is None:
         user = require_authenticated_user(request)
     rate_limiter.check_request(user, base.get_task_id(request))
+    rate_limiter.check_generation(user, base.get_task_id(request))
+    rate_limiter.check_generation(user, base.get_task_id(request))
+    rate_limiter.check_generation(user, base.get_task_id(request))
     video_script = llm.generate_script(
         video_subject=body.video_subject,
         language=body.video_language,

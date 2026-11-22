@@ -655,7 +655,7 @@ def upload_material(
                         f"failed to clean material file after ownership failure, "
                         f"request_id={request_id}, material={stored_filename}: {cleanup_exc}"
                     )
-            raise ownership_exc
+            raise  # preserve original traceback
     except material_upload_service.MaterialUploadError as exc:
         raise HttpException(
             task_id=request_id,

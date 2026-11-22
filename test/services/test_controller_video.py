@@ -40,7 +40,7 @@ class TestVideoControllerHelpers(unittest.TestCase):
     def test_sanitize_upload_filename_removes_client_path(self):
         """Windows 和 POSIX 客户端路径都只能保留最后一段安全文件名。"""
         for filename, expected in (
-            (r"C:videosclip.MOV", "clip.MOV"),
+            (r"C:\\videos\\clip.MOV", "clip.MOV"),
             ("../../images/photo.png", "photo.png"),
         ):
             with self.subTest(filename=filename):
@@ -688,7 +688,7 @@ class TestVideoControllerFiles(unittest.TestCase):
     def test_upload_video_material_validates_complete_extension(self):
         """大写合法扩展名应接受，无点号伪扩展名应拒绝。"""
         upload = SimpleNamespace(
-            filename=r"C:videosclip.MOV",
+            filename=r"C:\\videos\\clip.MOV",
             file=BytesIO(b"video"),
         )
         with patch.object(
@@ -955,3 +955,53 @@ class TestMaterialCompensation(unittest.TestCase):
                 video_controller.delete_material(self._request(), material_id, user=self._user())
             self.assertEqual(raised.exception.status_code, 503)
             del_mock.assert_not_called()
+
+    def test_delete_success_removes_object_then_ownership(self):
+        from app.security.ownership import ownership_store, TaskOwnershipRecord
+        from datetime import datetime, timezone
+        material_id = "mat-ok"
+        record = TaskOwnershipRecord(
+            task_id=material_id,
+            owner_id="owner-a",
+            created_at=datetime.now(timezone.utc),
+            kind="material",
+            metadata={},
+        )
+        with patch.object(ownership_store, "get", return_value=record), patch.object(video_controller.os.path, "isfile", return_value=True), patch.object(video_controller.os, "remove") as rm, patch.object(ownership_store, "delete", return_value=True) as del_mock:
+            resp = video_controller.delete_material(self._request(), material_id, user=self._user())
+        rm.assert_called_once()
+        del_mock.assert_called_once_with(material_id, "owner-a")
+        self.assertEqual(resp["data"]["deleted"], material_id)
+
+    def test_delete_ownership_false_after_object_removal_returns_503(self):
+        from app.security.ownership import ownership_store, TaskOwnershipRecord
+        from datetime import datetime, timezone
+        material_id = "mat-false"
+        record = TaskOwnershipRecord(
+            task_id=material_id,
+            owner_id="owner-a",
+            created_at=datetime.now(timezone.utc),
+            kind="material",
+            metadata={},
+        )
+        with patch.object(ownership_store, "get", return_value=record), patch.object(video_controller.os.path, "isfile", return_value=True), patch.object(video_controller.os, "remove"), patch.object(ownership_store, "delete", return_value=False):
+            with self.assertRaises(HttpException) as raised:
+                video_controller.delete_material(self._request(), material_id, user=self._user())
+        self.assertEqual(raised.exception.status_code, 503)
+
+    def test_delete_absent_object_still_removes_ownership(self):
+        from app.security.ownership import ownership_store, TaskOwnershipRecord
+        from datetime import datetime, timezone
+        material_id = "mat-gone"
+        record = TaskOwnershipRecord(
+            task_id=material_id,
+            owner_id="owner-a",
+            created_at=datetime.now(timezone.utc),
+            kind="material",
+            metadata={},
+        )
+        with patch.object(ownership_store, "get", return_value=record), patch.object(video_controller.os.path, "isfile", return_value=False), patch.object(video_controller.os, "remove") as rm, patch.object(ownership_store, "delete", return_value=True) as del_mock:
+            resp = video_controller.delete_material(self._request(), material_id, user=self._user())
+        rm.assert_not_called()
+        del_mock.assert_called_once()
+        self.assertEqual(resp["data"]["deleted"], material_id)

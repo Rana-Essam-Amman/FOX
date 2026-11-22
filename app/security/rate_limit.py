@@ -17,6 +17,7 @@ from threading import RLock
 
 from app.models.exception import HttpException
 from app.security.jwt_auth import AuthenticatedUser
+from app.security.runtime import create_rate_limiter
 
 
 @dataclass
@@ -67,6 +68,4 @@ class InMemoryRateLimiter:
             timestamps.append(now)
 
 
-# Runtime limiter. Production uses PostgresRateLimiter.
-from app.security.runtime import create_rate_limiter
 rate_limiter = create_rate_limiter()

@@ -49,8 +49,13 @@ class TestVideoControllerHelpers(unittest.TestCase):
                     expected,
                 )
 
-    def test_local_material_list_skips_broken_and_external_symlinks(self):
-        """One stale link must not 500 the picker or reveal external file metadata."""
+    def test_owned_material_list_skips_broken_and_external_symlinks(self):
+        """Owned records whose file is a broken or external link must not be listed."""
+        from app.security import private_materials
+        from app.security.ownership import InMemoryOwnershipStore, TaskOwnershipRecord
+        from datetime import datetime, timezone
+        from app.security.jwt_auth import AuthenticatedUser
+
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             material_dir = root / "materials"
@@ -64,27 +69,41 @@ class TestVideoControllerHelpers(unittest.TestCase):
             except (OSError, NotImplementedError) as exc:
                 self.skipTest(f"symlinks are unavailable: {exc}")
 
-            with patch.object(
-                video_controller.utils, "storage_dir", return_value=str(material_dir)
-            ):
-                response = video_controller.get_video_materials_list(self._request())
+            store = InMemoryOwnershipStore()
+            for stored in ("clip.mp4", "external.mp4", "broken.mp4"):
+                store.create(TaskOwnershipRecord(
+                    task_id=stored, owner_id="user-a",
+                    created_at=datetime.now(timezone.utc), kind="material",
+                    metadata={"filename": stored},
+                ))
+            with patch.object(video_controller.utils, "storage_dir", return_value=str(material_dir)), \
+                    patch.object(video_controller, "ownership_store", store), \
+                    patch.object(private_materials, "ownership_store", store):
+                response = video_controller.get_video_materials_list(
+                    self._request(), user=AuthenticatedUser(sub="user-a")
+                )
 
         self.assertEqual(response["data"]["files"], [
             {"name": "clip.mp4", "size": 5, "file": "clip.mp4"}
         ])
 
-    def test_local_material_list_includes_supported_uppercase_extensions(self):
-        """Manually copied materials should be listed like uploads on any OS."""
+    def test_unowned_uppercase_material_is_not_listed(self):
+        """A manually copied file without an ownership record must stay hidden."""
+        from app.security import private_materials
+        from app.security.ownership import InMemoryOwnershipStore
+        from app.security.jwt_auth import AuthenticatedUser
+
         with tempfile.TemporaryDirectory() as temp_dir:
             (Path(temp_dir) / "photo.PNG").write_bytes(b"image")
-            with patch.object(
-                video_controller.utils, "storage_dir", return_value=temp_dir
-            ):
-                response = video_controller.get_video_materials_list(self._request())
+            store = InMemoryOwnershipStore()
+            with patch.object(video_controller.utils, "storage_dir", return_value=temp_dir), \
+                    patch.object(video_controller, "ownership_store", store), \
+                    patch.object(private_materials, "ownership_store", store):
+                response = video_controller.get_video_materials_list(
+                    self._request(), user=AuthenticatedUser(sub="user-a")
+                )
 
-        self.assertEqual(response["data"]["files"], [
-            {"name": "photo.PNG", "size": 5, "file": "photo.PNG"}
-        ])
+        self.assertEqual(response["data"]["files"], [])
 
     def test_fastapi_startup_recovers_interrupted_cross_posts(self):
         """API 进程启动时必须执行一次发布遗留状态恢复。"""

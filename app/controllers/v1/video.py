@@ -14,6 +14,7 @@ from starlette.background import BackgroundTask
 from app.config import config
 from app.controllers import base
 from app.security import require_authenticated_user, require_task_owner, ownership_store, TaskOwnershipRecord
+from app.security.private_materials import list_owned_materials, record_owned_material
 from datetime import datetime, timezone
 from app.controllers.manager.base_manager import TaskQueueFullError
 from app.controllers.manager.memory_manager import InMemoryTaskManager
@@ -524,36 +525,15 @@ def upload_bgm_file(
     return utils.get_response(200, response)
 
 @router.get(
-    "/video_materials", response_model=VideoMaterialRetrieveResponse, summary="Retrieve local video materials"
+    "/video_materials", response_model=VideoMaterialRetrieveResponse, summary="List the caller's private video materials"
 )
-def get_video_materials_list(request: Request):
-    allowed_suffixes = material_upload_service.SUPPORTED_MATERIAL_EXTENSIONS
+def get_video_materials_list(request: Request, user=None):
+    # Only materials with an ownership record for the caller are listed. Files
+    # in the shared directory without a record (legacy/unowned) stay hidden.
+    if user is None:
+        user = require_authenticated_user(request)
     local_videos_dir = utils.storage_dir("local_videos", create=True)
-    video_materials_list = []
-    with os.scandir(local_videos_dir) as entries:
-        for entry in entries:
-            if (
-                entry.name.startswith(".")
-                or pathlib.Path(entry.name).suffix.lower() not in allowed_suffixes
-            ):
-                continue
-            try:
-                # Do not follow links outside local_videos or list an upload
-                # that disappeared while the directory was being scanned.
-                if not entry.is_file(follow_symlinks=False):
-                    continue
-                size = entry.stat(follow_symlinks=False).st_size
-            except OSError as exc:
-                logger.warning(
-                    f"skip unavailable local material: name={entry.name}, error={exc}"
-                )
-                continue
-            video_materials_list.append(
-                {"name": entry.name, "size": size, "file": entry.name}
-            )
-    # Keep ordered material selection stable across file systems and runs.
-    video_materials_list.sort(key=lambda item: (item["name"].casefold(), item["name"]))
-    response = {"files": video_materials_list}
+    response = {"files": list_owned_materials(user.sub, local_videos_dir)}
     return utils.get_response(200, response)
 
 
@@ -578,6 +558,10 @@ def upload_video_material_file(
         safe_filename = _sanitize_upload_filename(file.filename, request_id)
         stored_filename = material_upload_service.save_material_upload(
             safe_filename, file.file
+        )
+        stored_path = os.path.join(utils.storage_dir("local_videos"), stored_filename)
+        record_owned_material(
+            stored_path, stored_filename, safe_filename, user.sub, request_id
         )
     except material_upload_service.MaterialUploadError as exc:
         logger.warning(
@@ -633,29 +617,11 @@ def upload_material(
             safe_filename, file.file
         )
         stored_path = os.path.join(utils.storage_dir("local_videos"), stored_filename)
-        # Record ownership for the stored material so cross-user access can be denied.
-        try:
-            ownership_store.create(
-                TaskOwnershipRecord(
-                    task_id=stored_filename,
-                    owner_id=user.sub,
-                    created_at=datetime.now(timezone.utc),
-                    kind="material",
-                    metadata={"filename": safe_filename, "request_id": request_id},
-                )
-            )
-        except Exception:
-            # Ownership failed after the file was written. Attempt to remove
-            # only the file this request just created.
-            if stored_path and os.path.isfile(stored_path):
-                try:
-                    os.remove(stored_path)
-                except OSError as cleanup_exc:
-                    logger.error(
-                        f"failed to clean material file after ownership failure, "
-                        f"request_id={request_id}, material={stored_filename}: {cleanup_exc}"
-                    )
-            raise  # preserve original traceback
+        # Ownership is recorded before the upload is returned; on failure the
+        # helper removes only the file this request just wrote.
+        record_owned_material(
+            stored_path, stored_filename, safe_filename, user.sub, request_id
+        )
     except material_upload_service.MaterialUploadError as exc:
         raise HttpException(
             task_id=request_id,

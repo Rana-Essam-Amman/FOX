@@ -60,11 +60,21 @@ return task
 """
 
 _RENEW_RUNNING_SLOT_SCRIPT = """
-if redis.call("ZSCORE", KEYS[1], ARGV[1]) then
-    redis.call("ZADD", KEYS[1], "XX", ARGV[2], ARGV[1])
-    return 1
+-- ARGV[1] = token
+-- ARGV[2] = new deadline
+-- ARGV[3] = optional task_id
+-- ARGV[4] = optional expected generation
+if not redis.call("ZSCORE", KEYS[1], ARGV[1]) then
+    return 0
 end
-return 0
+if ARGV[3] ~= "" and ARGV[4] ~= "" then
+    local gen = redis.call("HGET", ARGV[3], "generation")
+    if not gen or tonumber(gen) ~= tonumber(ARGV[4]) then
+        return 0
+    end
+end
+redis.call("ZADD", KEYS[1], "XX", ARGV[2], ARGV[1])
+return 1
 """
 
 _RUNNING_SLOT_LEASE_SECONDS = 90.0
@@ -261,9 +271,12 @@ class RedisTaskManager(TaskManager):
 
     def _run_reserved_task(self, token: str, func, *args, **kwargs):
         stop_heartbeat = threading.Event()
+        from app.services.state import current_generation
+        gen = current_generation.get()
+        task_id = str(args[0]) if args else ""
         heartbeat = threading.Thread(
             target=self._renew_slot_until_done,
-            args=(token, stop_heartbeat),
+            args=(token, stop_heartbeat, task_id, gen),
             daemon=True,
         )
         heartbeat.start()
@@ -275,7 +288,7 @@ class RedisTaskManager(TaskManager):
             self.task_done()
             self._worker_context.slot_token = None
 
-    def _renew_slot_until_done(self, token: str, stop: threading.Event):
+    def _renew_slot_until_done(self, token: str, stop: threading.Event, task_id: str = "", expected_generation: int | None = None):
         while not stop.wait(_RUNNING_SLOT_HEARTBEAT_SECONDS):
             try:
                 renewed = self.redis_client.eval(
@@ -284,6 +297,8 @@ class RedisTaskManager(TaskManager):
                     self.running_slots_key,
                     token,
                     self._lease_deadline_ms(),
+                    task_id,
+                    str(expected_generation) if expected_generation is not None else "",
                 )
                 if not renewed:
                     logger.error(f"lost Redis running slot lease: {token}")

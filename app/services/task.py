@@ -2054,29 +2054,29 @@ def start(
         with generation_progress.task_scope(task_id):
             try:
                 return _run_pipeline(
-                task_id,
-                params,
-                stop_at=stop_at,
-                voice_preview=voice_preview,
-                loomloom_video_request=loomloom_video_request,
-                allow_server_file_input=allow_server_file_input,
-                voxcpm_reference_audio=voxcpm_reference_audio,
-                voxcpm_prompt_audio=voxcpm_prompt_audio,
-                voxcpm_prompt_text=voxcpm_prompt_text,
-                **({"codex_image_context": codex_image_context}
-                   if codex_image_context is not None else {}),
-                **({"jalapeno_video_endpoint": jalapeno_video_endpoint}
-                   if jalapeno_video_endpoint is not None else {}),
-            )
-        except Exception as exc:
-            logger.exception(
-                f"unexpected task pipeline failure, task_id: {task_id}, error: {exc}"
-            )
-            return _mark_task_failed(
-                task_id,
-                "pipeline",
-                f"{type(exc).__name__}: {exc}",
-            )
+                    task_id,
+                    params,
+                    stop_at=stop_at,
+                    voice_preview=voice_preview,
+                    loomloom_video_request=loomloom_video_request,
+                    allow_server_file_input=allow_server_file_input,
+                    voxcpm_reference_audio=voxcpm_reference_audio,
+                    voxcpm_prompt_audio=voxcpm_prompt_audio,
+                    voxcpm_prompt_text=voxcpm_prompt_text,
+                    **({"codex_image_context": codex_image_context}
+                       if codex_image_context is not None else {}),
+                    **({"jalapeno_video_endpoint": jalapeno_video_endpoint}
+                       if jalapeno_video_endpoint is not None else {}),
+                )
+            except Exception as exc:
+                logger.exception(
+                    f"unexpected task pipeline failure, task_id: {task_id}, error: {exc}"
+                )
+                return _mark_task_failed(
+                    task_id,
+                    "pipeline",
+                    f"{type(exc).__name__}: {exc}",
+                )
     finally:
         current_generation.reset(token)
 

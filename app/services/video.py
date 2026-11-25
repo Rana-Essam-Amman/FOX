@@ -1,3 +1,4 @@
+import contextvars
 import itertools
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
@@ -1257,7 +1258,11 @@ def combine_videos(
                 candidate_index += 1
             if not batch:
                 break
-            for processed_clip in executor.map(process_clip_in_task_scope, batch):
+            # Propagate fencing generation (and any other ContextVars) into clip workers.
+            ctx = contextvars.copy_context()
+            def _run_in_context(item):
+                return ctx.run(process_clip_in_task_scope, item)
+            for processed_clip in executor.map(_run_in_context, batch):
                 if processed_clip is None:
                     continue
                 processed_clips.append(processed_clip)

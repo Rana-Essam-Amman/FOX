@@ -1,3 +1,4 @@
+import contextvars
 import json
 import math
 import os
@@ -41,6 +42,8 @@ from app.services import (
 )
 from app.services import upload_post
 from app.services import state as sm
+from app.services.state import current_generation
+from app.services.fencing import acquire_generation
 from app.utils import file_security, utils
 from app.utils.subtitle_writer import staged_subtitle_file
 
@@ -1531,7 +1534,10 @@ def _schedule_cross_post(
         return error
 
     try:
+        # Propagate the current fencing generation into the worker thread.
+        ctx = contextvars.copy_context()
         future = _cross_post_executor.submit(
+            ctx.run,
             _run_cross_post_with_slot,
             task_id,
             tuple(video_paths),
@@ -2038,9 +2044,16 @@ def start(
     ``allow_server_file_input`` 只供本机 CLI 使用。HTTP API 和 WebUI 必须保持
     默认值，让自定义音频始终受当前任务目录约束。
     """
-    with generation_progress.task_scope(task_id):
-        try:
-            return _run_pipeline(
+    # Acquire a new fencing generation before any pipeline work. Bind it for
+    # the duration of this execution so all RedisState mutations are fenced.
+    generation = None
+    if hasattr(sm.state, "_redis"):
+        generation = acquire_generation(sm.state._redis, task_id)
+    token = current_generation.set(generation)
+    try:
+        with generation_progress.task_scope(task_id):
+            try:
+                return _run_pipeline(
                 task_id,
                 params,
                 stop_at=stop_at,
@@ -2064,6 +2077,8 @@ def start(
                 "pipeline",
                 f"{type(exc).__name__}: {exc}",
             )
+    finally:
+        current_generation.reset(token)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ import ast
 import copy
 import threading
 from abc import ABC, abstractmethod
+from contextvars import ContextVar
 
 from redis.exceptions import ResponseError
 from itertools import islice
@@ -39,6 +40,11 @@ end
 return redis.call("DEL", KEYS[1])
 """
 
+
+# Generation bound to the current worker execution.
+# Set by the worker start path (Increment 3). RedisState mutation methods
+# use this value when no explicit generation is supplied.
+current_generation: ContextVar[int | None] = ContextVar("current_generation", default=None)
 
 # Base class for state management
 class BaseState(ABC):
@@ -202,6 +208,7 @@ class RedisState(BaseState):
         task_id: str,
         state: int = const.TASK_STATE_PROCESSING,
         progress: int = 0,
+        generation: int | None = None,
         **kwargs,
     ):
         progress = int(progress)
@@ -215,9 +222,21 @@ class RedisState(BaseState):
             **kwargs,
         }
 
-        # One HSET writes the whole task state atomically. Separate commands
-        # could expose a new state with the previous progress or result fields
-        # to readers, and leave a partially updated record on network failure.
+        expected = generation if generation is not None else current_generation.get()
+        if expected is not None:
+            # Fenced write: only succeed if Redis generation still matches.
+            from app.services.fencing import compare_and_write
+            success = compare_and_write(
+                self._redis,
+                task_id,
+                expected,
+                {field: self._serialize_field(field, value) for field, value in fields.items()},
+            )
+            if not success:
+                return False
+            return True
+
+        # Legacy unfenced path (no generation bound). Prefer to avoid in new code.
         self._redis.hset(
             task_id,
             mapping={
@@ -225,6 +244,7 @@ class RedisState(BaseState):
                 for field, value in fields.items()
             },
         )
+        return True
 
     def get_task(self, task_id: str):
         try:
@@ -250,9 +270,18 @@ class RedisState(BaseState):
         }
         return task
 
-    def patch_task(self, task_id: str, **kwargs) -> bool:
+    def patch_task(self, task_id: str, generation: int | None = None, **kwargs) -> bool:
         if not kwargs:
             return False
+
+        expected = generation if generation is not None else current_generation.get()
+        if expected is not None:
+            from app.services.fencing import compare_and_write
+            fields = {
+                field: self._serialize_field(field, value)
+                for field, value in kwargs.items()
+            }
+            return compare_and_write(self._redis, task_id, expected, fields)
 
         arguments = []
         for field, value in kwargs.items():
@@ -269,10 +298,27 @@ class RedisState(BaseState):
         )
         return bool(updated)
 
-    def delete_task(self, task_id: str):
+    def delete_task(self, task_id: str, generation: int | None = None):
+        expected = generation if generation is not None else current_generation.get()
+        if expected is not None:
+            # Fenced delete: only delete if generation still matches.
+            script = """
+            if redis.call("TYPE", KEYS[1]).ok ~= "hash" then
+                return 0
+            end
+            local current = redis.call("HGET", KEYS[1], "generation")
+            if not current or tonumber(current) ~= tonumber(ARGV[1]) then
+                return 0
+            end
+            return redis.call("DEL", KEYS[1])
+            """
+            result = self._redis.eval(script, 1, task_id, str(expected))
+            return bool(result)
+
         # 调用方读取任务后还会清理目录，同名键可能在这段时间被其它服务复用。
         # 在一次 Lua 操作内检查类型、任务标记并删除，避免检查与删除之间的竞态。
         self._redis.eval(_DELETE_OWNED_TASK_SCRIPT, 1, task_id)
+        return True
 
     @staticmethod
     def _serialize_field(field, value):

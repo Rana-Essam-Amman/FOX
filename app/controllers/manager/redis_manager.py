@@ -314,10 +314,26 @@ class RedisTaskManager(TaskManager):
             except ExecutionDenied as exc:
                 logger.error(f"worker authorization denied for {task_id}: {exc}")
                 handoff.fail()
+                # Safe terminal: no generation yet (never started), so recovery
+                # can mark FAILED without risking a newer attempt.
+                try:
+                    sm.state.recovery_patch(
+                        task_id, state=-1, failed_stage="authorization",
+                        error=f"authorization denied: {exc}",
+                    )
+                except Exception:
+                    pass
                 return
             except Exception as exc:
                 logger.error(f"ownership store error for {task_id}: {exc}")
                 handoff.fail()
+                try:
+                    sm.state.recovery_patch(
+                        task_id, state=-1, failed_stage="authorization",
+                        error=f"ownership store error: {exc}",
+                    )
+                except Exception:
+                    pass
                 return
             func(*args, **kwargs)
         finally:

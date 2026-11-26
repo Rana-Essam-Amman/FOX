@@ -1,7 +1,5 @@
 """Production publication race and handoff tests. Real Redis, production code."""
 
-import os
-import tempfile
 
 import pytest
 import redis
@@ -11,7 +9,7 @@ from app.services.fencing import (
     publish_artifact_reference,
     cleanup_generation_artifacts,
 )
-from app.services.state import RedisState, current_generation
+from app.services.state import RedisState
 
 
 @pytest.fixture

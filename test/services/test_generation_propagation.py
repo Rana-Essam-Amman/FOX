@@ -3,7 +3,6 @@
 import contextvars
 from concurrent.futures import ThreadPoolExecutor
 
-import pytest
 
 from app.services.state import current_generation
 

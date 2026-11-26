@@ -1,7 +1,5 @@
 """Tests for the production lease-loss guard. Real Redis, production code."""
 
-import os
-import tempfile
 import threading
 
 import pytest

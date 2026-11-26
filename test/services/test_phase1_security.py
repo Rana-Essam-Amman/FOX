@@ -1,5 +1,8 @@
 """Phase 1 security tests: ownership policy, reserved namespace, recovery fencing."""
 
+from app.services.fencing import acquire_generation
+from app.services.state import RedisState
+
 import pytest
 import redis
 
@@ -17,8 +20,6 @@ ns = _load('app.security.owner_namespaces', 'app/security/owner_namespaces.py')
 user_owner_id, OwnerNamespaceError, POLICY_USER = ns.user_owner_id, ns.OwnerNamespaceError, ns.POLICY_USER
 te = _load('app.security.task_execution', 'app/security/task_execution.py')
 authorize_task_execution, ExecutionDenied = te.authorize_task_execution, te.ExecutionDenied
-from app.services.fencing import acquire_generation
-from app.services.state import RedisState
 
 
 @pytest.fixture

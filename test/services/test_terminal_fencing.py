@@ -29,7 +29,7 @@ def test_lease_loss_blocks_complete(redis_client):
     state._redis = client
     state.create_task(task_id, state=1, progress=50)
     g1 = acquire_generation(client, task_id)
-    g2 = acquire_generation(client, task_id)
+    _g2 = acquire_generation(client, task_id)
 
     lost = threading.Event()
     lost.set()
@@ -56,7 +56,7 @@ def test_lease_loss_blocks_failed(redis_client):
     state._redis = client
     state.create_task(task_id, state=1, progress=30)
     g1 = acquire_generation(client, task_id)
-    g2 = acquire_generation(client, task_id)
+    _g2 = acquire_generation(client, task_id)
 
     # Newer generation sets a state
     token2 = current_generation.set(g2)

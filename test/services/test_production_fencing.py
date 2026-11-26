@@ -1,9 +1,6 @@
 """Production lifecycle tests for fencing. Execute real production code against real Redis."""
 
-import os
-import tempfile
 import threading
-from unittest.mock import patch
 
 import pytest
 import redis
@@ -99,7 +96,6 @@ def test_recovery_patch_limited_fields(redis_client):
 
 def test_handoff_independent_per_execution():
     # Minimal local replica of the production contract for independence.
-    import threading
     class H:
         def __init__(self, tid):
             self.task_id = tid
@@ -115,7 +111,6 @@ def test_handoff_independent_per_execution():
 
 def test_stale_cannot_overwrite_physical_output(tmp_path, redis_client):
     """Stale generation cannot promote its temp over the current worker's final file."""
-    from app.services.fencing import get_generation
     task_id = "test-fence-output"
     state = RedisState(host="localhost", port=6379, db=11)
     state._redis = redis_client

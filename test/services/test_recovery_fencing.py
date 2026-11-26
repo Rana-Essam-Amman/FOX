@@ -5,7 +5,6 @@ import redis
 
 from app.services.fencing import acquire_generation
 from app.services.state import RedisState
-from app.models import const
 
 
 @pytest.fixture

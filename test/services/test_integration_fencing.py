@@ -1,7 +1,5 @@
 """Integration tests for storage directory, lease-loss, cleanup, and list publication."""
 
-import os
-import tempfile
 
 import pytest
 import redis
@@ -12,7 +10,7 @@ from app.services.fencing import (
     cleanup_generation_artifacts,
     acquire_generation,
 )
-from app.services.state import RedisState, current_generation
+from app.services.state import RedisState
 from app.utils.utils import task_dir
 
 

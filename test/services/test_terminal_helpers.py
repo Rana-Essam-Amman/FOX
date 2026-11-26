@@ -58,7 +58,7 @@ def test_complete_if_owner_stale_rejected(redis_client):
     state._redis = client
     state.create_task(task_id, state=4)
     g1 = acquire_generation(client, task_id)
-    g2 = acquire_generation(client, task_id)
+    _g2 = acquire_generation(client, task_id)
     orig = _bind_state(state)
     token = current_generation.set(g1)
     try:
@@ -127,7 +127,7 @@ def test_mark_failed_stale_rejected(redis_client):
     state._redis = client
     state.create_task(task_id, state=4)
     g1 = acquire_generation(client, task_id)
-    g2 = acquire_generation(client, task_id)
+    _g2 = acquire_generation(client, task_id)
     # Newer sets a state
     token2 = current_generation.set(g2)
     try:

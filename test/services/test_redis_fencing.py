@@ -1,5 +1,6 @@
-import uuid
 """Real Redis tests for fencing primitives."""
+
+import uuid
 
 import pytest
 import redis

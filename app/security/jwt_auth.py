@@ -97,6 +97,12 @@ class JWTVerifier:
             raise HttpException(
                 task_id=request_id, status_code=401, message="token missing subject"
             )
+        # Reject reserved internal namespace so a user JWT cannot claim an
+        # internal owner identity.
+        if sub.startswith("internal:"):
+            raise HttpException(
+                task_id=request_id, status_code=401, message="reserved subject namespace"
+            )
 
         return AuthenticatedUser(
             sub=sub,

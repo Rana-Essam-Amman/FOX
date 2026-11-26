@@ -309,7 +309,7 @@ def create_task(
                     owner_id=user.sub,
                     created_at=datetime.now(timezone.utc),
                     kind=stop_at,
-                    metadata={"request_id": request_id},
+                    metadata={"request_id": request_id, "policy": "user"},
                 )
             )
         except Exception:

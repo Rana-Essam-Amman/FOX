@@ -268,28 +268,28 @@ class RedisState(BaseState):
         result = self._redis.eval(_DELETE_OWNED_TASK_SCRIPT, 1, task_id)
         return bool(result)
 
-    def recovery_patch(self, task_id: str, **kwargs) -> bool:
+    def recovery_patch(self, task_id: str, expected_generation: int | None = None, **kwargs) -> bool:
         """Narrow recovery update for queue dequeue failures.
 
-        Only allowed fields: state, failed_stage, error. Does not check
-        generation because the original worker may have died. Caller must
-        be the queue recovery path.
+        Requires an explicit expected_generation. The write is generation-fenced
+        via compare_and_write. If generation cannot be proven, the call returns
+        False and does not mutate state. Never recreates a deleted task.
         """
+        if expected_generation is None or expected_generation < 1:
+            return False
         allowed = {"state", "failed_stage", "error"}
         if not set(kwargs.keys()).issubset(allowed):
             raise ValueError(f"recovery_patch only allows {allowed}")
         if not kwargs:
             return False
-        arguments = []
-        for field, value in kwargs.items():
-            arguments.extend((field, self._serialize_field(field, value)))
-        updated = self._redis.eval(
-            _PATCH_EXISTING_TASK_SCRIPT,
-            1,
-            task_id,
-            *arguments,
-        )
-        return bool(updated)
+        from app.services.fencing import compare_and_write
+        try:
+            return bool(compare_and_write(
+                self._redis, task_id, expected_generation, kwargs
+            ))
+        except Exception:
+            return False
+
 
     def get_task(self, task_id: str):
         try:

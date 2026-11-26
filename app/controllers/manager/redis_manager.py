@@ -301,6 +301,24 @@ class RedisTaskManager(TaskManager):
         heartbeat.start()
         self._worker_context.slot_token = token
         try:
+            # Durable ownership authorization before any material or provider access.
+            # Fail closed on missing record, mismatch, or store error.
+            from app.security.task_execution import authorize_task_execution, ExecutionDenied
+            from app.security import ownership_store
+            try:
+                authorize_task_execution(
+                    task_id,
+                    expected_kind=kwargs.get("stop_at", "video"),
+                    lookup=ownership_store.get,
+                )
+            except ExecutionDenied as exc:
+                logger.error(f"worker authorization denied for {task_id}: {exc}")
+                handoff.fail()
+                return
+            except Exception as exc:
+                logger.error(f"ownership store error for {task_id}: {exc}")
+                handoff.fail()
+                return
             func(*args, **kwargs)
         finally:
             stop_heartbeat.set()

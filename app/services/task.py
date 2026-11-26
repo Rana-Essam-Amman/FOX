@@ -44,17 +44,17 @@ from app.services import upload_post
 from app.services import state as sm
 from app.services.state import current_generation
 from app.services.lease_guard import lease_lost_event, lease_lost as _lease_lost, check_lease_or_abort
+from app.services.terminal_guard import complete_if_owner as _complete_if_owner_impl, mark_failed_if_owner as _mark_failed_impl
 
 from app.services.fencing import acquire_generation, artifact_path_for_generation as _artifact_path_for_generation, publish_artifact_reference as _publish_artifact_reference, cleanup_generation_artifacts as _cleanup_generation_artifacts
 
-def _complete_if_owner(task_id: str, **kwargs):
-    """Mark COMPLETE only if we still own the lease and generation."""
-    from app.services.lease_guard import check_lease_or_abort
-    if check_lease_or_abort(task_id, "complete"):
-        logger.error(f"lease lost; not marking {task_id} COMPLETE")
-        return False
-    sm.state.update_task(task_id, state=const.TASK_STATE_COMPLETE, progress=100, **kwargs)
-    return True
+def _complete_if_owner(task_id: str, **kwargs) -> bool:
+    """Mark COMPLETE only if we still own the lease and generation.
+
+    Delegates to the shared production helper. Returns True only if the
+    state backend confirms the write succeeded.
+    """
+    return _complete_if_owner_impl(sm.state, task_id, **kwargs)
 
 from app.utils import file_security, utils
 from app.utils.subtitle_writer import staged_subtitle_file
@@ -336,16 +336,21 @@ def _mark_task_failed(
     })
     failure.update(failure_details)
     fields = {key: value for key, value in failure.items() if key != "task_id"}
+    write_ok = False
     for attempt in range(_TASK_FAILURE_STATE_WRITE_ATTEMPTS):
         try:
             if attempt == 0:
-                sm.state.update_task(task_id, **fields)
+                write_ok = bool(sm.state.update_task(task_id, **fields))
             else:
                 # A lost acknowledgement may mean the first write succeeded.
                 # Patch only an existing record so retries cannot revive a task
                 # that the user has since deleted.
-                sm.state.patch_task(task_id, **fields)
-            break
+                write_ok = bool(sm.state.patch_task(task_id, **fields))
+            if write_ok:
+                break
+            # Generation rejected; do not retry unfenced.
+            logger.error(f"generation rejected FAILED write for {task_id} at {stage}")
+            return {"task_id": task_id, "state": None, "write_rejected": True}
         except Exception as exc:
             if attempt + 1 == _TASK_FAILURE_STATE_WRITE_ATTEMPTS:
                 logger.exception(
@@ -1903,12 +1908,8 @@ def _run_pipeline(
                     except OSError as exc:
                         logger.warning(f"failed to remove incomplete audio export: {exc}")
             audio_file = output_file
-        sm.state.update_task(
-            task_id,
-            state=const.TASK_STATE_COMPLETE,
-            progress=100,
-            audio_file=audio_file,
-        )
+        if not _complete_if_owner(task_id, audio_file=audio_file):
+            return None
         return {"audio_file": audio_file, "audio_duration": audio_duration}
 
     generation_progress.stage("subtitle")
@@ -1924,12 +1925,8 @@ def _run_pipeline(
                 "subtitle",
                 "failed to generate subtitles; verify the subtitle provider and timeline",
             )
-        sm.state.update_task(
-            task_id,
-            state=const.TASK_STATE_COMPLETE,
-            progress=100,
-            subtitle_path=subtitle_path,
-        )
+        if not _complete_if_owner(task_id, subtitle_path=subtitle_path):
+            return None
         return {"subtitle_path": subtitle_path}
 
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=40)
@@ -1955,12 +1952,8 @@ def _run_pipeline(
         )
 
     if stop_at == "materials":
-        sm.state.update_task(
-            task_id,
-            state=const.TASK_STATE_COMPLETE,
-            progress=100,
-            materials=downloaded_videos,
-        )
+        if not _complete_if_owner(task_id, materials=downloaded_videos):
+            return None
         return {"materials": downloaded_videos}
 
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=50)

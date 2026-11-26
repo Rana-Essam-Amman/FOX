@@ -43,29 +43,7 @@ from app.services import (
 from app.services import upload_post
 from app.services import state as sm
 from app.services.state import current_generation
-lease_lost_event: contextvars.ContextVar = contextvars.ContextVar("lease_lost_event", default=None)
-
-def _lease_lost() -> bool:
-    """Return True if the current execution's lease has been lost."""
-    lost = lease_lost_event.get()
-    return lost is not None and lost.is_set()
-
-
-def _check_lease_or_abort(task_id: str, stage: str) -> bool:
-    """Cooperative lease check. Returns True if we should abort.
-
-    Does not mark the task FAILED (a newer worker may own it).
-    Cleans up only this generation's private artifacts.
-    """
-    if not _lease_lost():
-        return False
-    from app.services.state import current_generation
-    gen = current_generation.get()
-    logger.error(f"lease lost at {stage} for {task_id}; aborting without terminal mutation")
-    if gen is not None:
-        from app.utils.utils import task_dir as _task_dir
-        _cleanup_generation_artifacts(_task_dir(task_id), gen)
-    return True
+from app.services.lease_guard import lease_lost_event, lease_lost as _lease_lost, check_lease_or_abort
 
 from app.services.fencing import acquire_generation, artifact_path_for_generation as _artifact_path_for_generation, publish_artifact_reference as _publish_artifact_reference, cleanup_generation_artifacts as _cleanup_generation_artifacts
 from app.utils import file_security, utils
@@ -1215,7 +1193,7 @@ def generate_final_videos(
 
         # Publish authoritative reference only if we still own the generation.
         # The file itself is already written to an immutable generation-scoped name.
-        if _check_lease_or_abort(task_id, "final-video-publish"):
+        if check_lease_or_abort(task_id, "final-video-publish", cleanup=_cleanup_generation_artifacts, task_dir=utils.task_dir, current_generation=current_generation.get()):
             return [], [], warnings
         final_video_paths.append(final_video_path)
         combined_video_paths.append(combined_video_path)
@@ -2000,6 +1978,8 @@ def _run_pipeline(
             task_id, "video", f"{type(exc).__name__}: {exc}", details=partial_results,
         )
 
+    if check_lease_or_abort(task_id, "pipeline-complete", cleanup=_cleanup_generation_artifacts, task_dir=utils.task_dir, current_generation=current_generation.get()):
+        return None
     if not final_video_paths:
         return _mark_task_failed(
             task_id,

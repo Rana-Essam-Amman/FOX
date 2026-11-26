@@ -1,3 +1,4 @@
+import uuid
 """Real Redis tests for fencing primitives."""
 
 import pytest
@@ -15,7 +16,7 @@ def redis_client():
 
 
 def test_acquire_generation_ordering(redis_client):
-    task_id = "task-order"
+    task_id = f"task-order-{uuid.uuid4().hex[:8]}"
     redis_client.hset(task_id, mapping={"task_id": task_id, "state": "1"})
     g1 = acquire_generation(redis_client, task_id)
     g2 = acquire_generation(redis_client, task_id)
@@ -51,7 +52,7 @@ def test_stale_generation_rejected(redis_client):
 def test_concurrent_acquisition(redis_client):
     import threading
 
-    task_id = "task-concurrent"
+    task_id = f"task-concurrent-{uuid.uuid4().hex[:8]}"
     redis_client.hset(task_id, mapping={"task_id": task_id})
     results = []
     lock = threading.Lock()

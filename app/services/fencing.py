@@ -126,9 +126,14 @@ import os
 from pathlib import Path as _Path
 
 def artifact_path_for_generation(task_id: str, base_name: str, generation: int | None, task_dir: str | None = None) -> str:
-    """Return an immutable generation-scoped artifact path."""
+    """Return an immutable generation-scoped artifact path under the real task storage.
+
+    Uses app.utils.utils.task_dir when task_dir is not supplied so paths
+    resolve under the configured FOX storage directory.
+    """
     if task_dir is None:
-        task_dir = f"/tmp/fox-tasks/{task_id}"
+        from app.utils.utils import task_dir as _task_dir
+        task_dir = _task_dir(task_id)
     if generation is not None and generation >= 1:
         stem, ext = os.path.splitext(base_name)
         gen_name = f"{stem}.gen{generation}{ext}"
@@ -162,12 +167,18 @@ def publish_artifact_reference(
 
 
 def cleanup_generation_artifacts(task_dir: str, generation: int) -> None:
-    """Remove only artifacts belonging to the given generation in task_dir."""
+    """Remove only artifacts belonging to the exact generation.
+
+    Matches ".gen{N}." or ".gen{N}" at end of stem so ".gen1" does not
+    match ".gen10" or ".gen11".
+    """
     if not os.path.isdir(task_dir):
         return
-    suffix = f".gen{generation}"
+    marker = f".gen{generation}."
+    marker_end = f".gen{generation}"
     for name in os.listdir(task_dir):
-        if suffix in name:
+        stem, ext = os.path.splitext(name)
+        if marker in name or stem.endswith(marker_end):
             try:
                 os.remove(os.path.join(task_dir, name))
             except OSError:

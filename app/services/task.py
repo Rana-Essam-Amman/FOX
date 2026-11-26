@@ -44,6 +44,29 @@ from app.services import upload_post
 from app.services import state as sm
 from app.services.state import current_generation
 lease_lost_event: contextvars.ContextVar = contextvars.ContextVar("lease_lost_event", default=None)
+
+def _lease_lost() -> bool:
+    """Return True if the current execution's lease has been lost."""
+    lost = lease_lost_event.get()
+    return lost is not None and lost.is_set()
+
+
+def _check_lease_or_abort(task_id: str, stage: str) -> bool:
+    """Cooperative lease check. Returns True if we should abort.
+
+    Does not mark the task FAILED (a newer worker may own it).
+    Cleans up only this generation's private artifacts.
+    """
+    if not _lease_lost():
+        return False
+    from app.services.state import current_generation
+    gen = current_generation.get()
+    logger.error(f"lease lost at {stage} for {task_id}; aborting without terminal mutation")
+    if gen is not None:
+        from app.utils.utils import task_dir as _task_dir
+        _cleanup_generation_artifacts(_task_dir(task_id), gen)
+    return True
+
 from app.services.fencing import acquire_generation, artifact_path_for_generation as _artifact_path_for_generation, publish_artifact_reference as _publish_artifact_reference, cleanup_generation_artifacts as _cleanup_generation_artifacts
 from app.utils import file_security, utils
 from app.utils.subtitle_writer import staged_subtitle_file
@@ -671,7 +694,9 @@ def generate_subtitle(task_id, params, video_script, sub_maker, audio_file):
     if not params.subtitle_enabled:
         return ""
 
-    final_subtitle_path = path.join(utils.task_dir(task_id), "subtitle.srt")
+    from app.services.state import current_generation as _cg
+    _gen = _cg.get()
+    final_subtitle_path = _artifact_path_for_generation(task_id, "subtitle.srt", _gen)
     subtitle_provider = config.app.get("subtitle_provider", "edge").strip().lower()
     logger.info(f"\n\n## generating subtitle, provider: {subtitle_provider}")
 
@@ -1073,9 +1098,9 @@ def generate_final_videos(
         index = i + 1
         if partial_results is not None:
             partial_results["failed_video_index"] = index
-        combined_video_path = path.join(
-            utils.task_dir(task_id), f"combined-{index}.mp4"
-        )
+        from app.services.state import current_generation as _cg
+        _gen = _cg.get()
+        combined_video_path = _artifact_path_for_generation(task_id, f"combined-{index}.mp4", _gen)
         logger.info(f"\n\n## combining video: {index} => {combined_video_path}")
         used_video_paths = []
         batch_options = (
@@ -1141,9 +1166,10 @@ def generate_final_videos(
             service = video_music_provider["service"]
             display_name = video_music_provider["display_name"]
             warning_code = video_music_provider["warning_code"]
-            generated_bgm_path = path.join(
-                utils.task_dir(task_id),
-                (f"{params.bgm_type}-bgm-{index}{video_music_provider['suffix']}"),
+            generated_bgm_path = _artifact_path_for_generation(
+                task_id,
+                f"{params.bgm_type}-bgm-{index}{video_music_provider['suffix']}",
+                gen,
             )
             try:
                 service.generate_bgm(
@@ -1189,17 +1215,27 @@ def generate_final_videos(
 
         # Publish authoritative reference only if we still own the generation.
         # The file itself is already written to an immutable generation-scoped name.
-        if not _publish_artifact_reference(task_id, "videos", final_video_path, gen):
-            logger.error(f"lost generation ownership; not publishing {final_video_path}")
-            _cleanup_generation_artifacts(task_id, gen or 0)
+        if _check_lease_or_abort(task_id, "final-video-publish"):
             return [], [], warnings
         final_video_paths.append(final_video_path)
         combined_video_paths.append(combined_video_path)
+        # Publish the complete list atomically under our generation.
+        from app.services.fencing import publish_artifact_reference
+        if not publish_artifact_reference(
+            sm.state._redis if hasattr(sm.state, "_redis") else None,
+            task_id,
+            "videos",
+            list(final_video_paths),
+            gen,
+        ):
+            logger.error(f"lost generation ownership; not publishing videos for {task_id}")
+            if gen is not None:
+                from app.utils.utils import task_dir as _task_dir
+                _cleanup_generation_artifacts(_task_dir(task_id), gen)
+            return [], [], warnings
         _progress += 50 / params.video_count / 2
-        sm.state.update_task(
-            task_id, progress=_progress, videos=list(final_video_paths),
-            combined_videos=list(combined_video_paths), warnings=list(warnings) or None,
-        )
+        # Progress update is fenced by the bound generation.
+        sm.state.update_task(task_id, progress=_progress, warnings=list(warnings) or None)
 
     return final_video_paths, combined_video_paths, warnings
 

@@ -3,20 +3,7 @@
 import pytest
 import redis
 
-# Inline copy of the fenced renewal script to avoid heavy import chain in unit tests.
-_RENEW_RUNNING_SLOT_SCRIPT = """
-if not redis.call("ZSCORE", KEYS[1], ARGV[1]) then
-    return 0
-end
-if ARGV[3] ~= "" and ARGV[4] ~= "" then
-    local gen = redis.call("HGET", ARGV[3], "generation")
-    if not gen or tonumber(gen) ~= tonumber(ARGV[4]) then
-        return 0
-    end
-end
-redis.call("ZADD", KEYS[1], "XX", ARGV[2], ARGV[1])
-return 1
-"""
+from app.services.fencing import RENEW_RUNNING_SLOT_SCRIPT as _RENEW_RUNNING_SLOT_SCRIPT
 from app.services.fencing import acquire_generation
 
 
@@ -69,7 +56,8 @@ def test_stale_generation_cannot_renew_lease(redis_client):
     assert redis_client.zscore(slots_key, token) == 2_000_000
 
 
-def test_renewal_without_generation_still_works(redis_client):
+def test_renewal_without_generation_is_rejected(redis_client):
+    """Fail closed: missing identity must not renew a user-task lease."""
     slots_key = "running:slots"
     token = "plain-token"
     redis_client.zadd(slots_key, {token: 100})
@@ -82,5 +70,5 @@ def test_renewal_without_generation_still_works(redis_client):
         "",
         "",
     )
-    assert result == 1
-    assert redis_client.zscore(slots_key, token) == 200
+    assert result == 0
+    assert redis_client.zscore(slots_key, token) == 100

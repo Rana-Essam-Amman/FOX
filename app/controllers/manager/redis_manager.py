@@ -13,12 +13,33 @@ from app.controllers.manager.base_manager import TaskManager, TaskQueueFullError
 from app.models import const
 from app.models.schema import AudioRequest, SubtitleRequest, VideoParams
 from app.services import state as sm
+from app.services.fencing import RENEW_RUNNING_SLOT_SCRIPT
 from app.services import task as tm
 
 FUNC_MAP = {
     "start": tm.start,
     # 'start_test': tm.start_test
 }
+
+class GenerationHandoff:
+    """Per-execution handoff for fencing generation.
+
+    Created by the manager, filled by start() after acquisition.
+    Heartbeat waits on the event and never reads generation from Redis itself.
+    """
+    def __init__(self, task_id: str):
+        self.task_id = task_id
+        self.generation: int | None = None
+        self.ready = threading.Event()
+        self.failed = False
+
+    def publish(self, generation: int) -> None:
+        self.generation = generation
+        self.ready.set()
+
+    def fail(self) -> None:
+        self.failed = True
+        self.ready.set()
 
 _ADMIT_QUEUED_TASK_SCRIPT = """
 if redis.call("LLEN", KEYS[1]) >= tonumber(ARGV[1]) then
@@ -59,23 +80,7 @@ redis.call("ZADD", KEYS[2], ARGV[3], ARGV[4])
 return task
 """
 
-_RENEW_RUNNING_SLOT_SCRIPT = """
--- ARGV[1] = token
--- ARGV[2] = new deadline
--- ARGV[3] = optional task_id
--- ARGV[4] = optional expected generation
-if not redis.call("ZSCORE", KEYS[1], ARGV[1]) then
-    return 0
-end
-if ARGV[3] ~= "" and ARGV[4] ~= "" then
-    local gen = redis.call("HGET", ARGV[3], "generation")
-    if not gen or tonumber(gen) ~= tonumber(ARGV[4]) then
-        return 0
-    end
-end
-redis.call("ZADD", KEYS[1], "XX", ARGV[2], ARGV[1])
-return 1
-"""
+# RENEW_RUNNING_SLOT_SCRIPT imported from app.services.fencing
 
 _RUNNING_SLOT_LEASE_SECONDS = 90.0
 _RUNNING_SLOT_HEARTBEAT_SECONDS = 30.0
@@ -270,13 +275,22 @@ class RedisTaskManager(TaskManager):
         thread.start()
 
     def _run_reserved_task(self, token: str, func, *args, **kwargs):
+        # Extract task_id from the actual execution payload (kwargs preferred).
+        task_id = kwargs.get("task_id") or (str(args[0]) if args else "")
+        if not task_id:
+            logger.error("reserved task missing task_id; releasing slot without execution")
+            self._release_slot(token)
+            return
+
+        handoff = GenerationHandoff(task_id)
+        # Inject private callback. Not serialized; only present for this execution.
+        kwargs = dict(kwargs)
+        kwargs["_generation_handoff"] = handoff
+
         stop_heartbeat = threading.Event()
-        from app.services.state import current_generation
-        gen = current_generation.get()
-        task_id = str(args[0]) if args else ""
         heartbeat = threading.Thread(
             target=self._renew_slot_until_done,
-            args=(token, stop_heartbeat, task_id, gen),
+            args=(token, stop_heartbeat, handoff),
             daemon=True,
         )
         heartbeat.start()
@@ -285,23 +299,34 @@ class RedisTaskManager(TaskManager):
             func(*args, **kwargs)
         finally:
             stop_heartbeat.set()
+            if not handoff.ready.is_set():
+                handoff.fail()
             self.task_done()
             self._worker_context.slot_token = None
 
-    def _renew_slot_until_done(self, token: str, stop: threading.Event, task_id: str = "", expected_generation: int | None = None):
+    def _renew_slot_until_done(self, token: str, stop: threading.Event, handoff: "GenerationHandoff"):
+        # Wait for the worker to publish its acquired generation. Do not read
+        # generation from Redis; that could adopt a newer worker's value.
+        if not handoff.ready.wait(timeout=_RUNNING_SLOT_LEASE_SECONDS):
+            logger.error(f"generation handoff timed out for {handoff.task_id}; stopping heartbeat")
+            return
+        if handoff.failed or handoff.generation is None or handoff.generation < 1:
+            logger.error(f"no valid generation for {handoff.task_id}; stopping heartbeat without renewal")
+            return
+
         while not stop.wait(_RUNNING_SLOT_HEARTBEAT_SECONDS):
             try:
                 renewed = self.redis_client.eval(
-                    _RENEW_RUNNING_SLOT_SCRIPT,
+                    RENEW_RUNNING_SLOT_SCRIPT,
                     1,
                     self.running_slots_key,
                     token,
                     self._lease_deadline_ms(),
-                    task_id,
-                    str(expected_generation) if expected_generation is not None else "",
+                    handoff.task_id,
+                    str(handoff.generation),
                 )
                 if not renewed:
-                    logger.error(f"lost Redis running slot lease: {token}")
+                    logger.error(f"lost Redis running slot lease: {token} (task={handoff.task_id}, gen={handoff.generation})")
                     return
             except redis.RedisError as exc:
                 # A temporary Redis outage must not kill the user task. The
@@ -419,7 +444,7 @@ class RedisTaskManager(TaskManager):
                 else None
             )
             if isinstance(task_id, str) and task_id:
-                sm.state.patch_task(
+                sm.state.recovery_patch(
                     task_id,
                     state=const.TASK_STATE_FAILED,
                     failed_stage="dequeue",
@@ -452,7 +477,7 @@ class RedisTaskManager(TaskManager):
                 # task_id 不是字符串时同上：没有可回写的记录，跳过状态更新。
                 task_id = task_kwargs.get("task_id")
                 if isinstance(task_id, str) and task_id:
-                    sm.state.patch_task(
+                    sm.state.recovery_patch(
                         task_id,
                         state=const.TASK_STATE_FAILED,
                         failed_stage="dequeue",

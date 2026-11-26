@@ -1244,7 +1244,7 @@ def _delete_task(task_id, task_path, task_state=None):
         # Keep the persisted task available for retry when file removal fails
         # (for example, a video is still locked by another process on Windows).
         if hasattr(sm.state, "delete_task"):
-            sm.state.delete_task(task_id)
+            sm.state.authorized_delete(task_id)
         logger.info(f"deleted task: {task_id}")
         return True
     except Exception as e:

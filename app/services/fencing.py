@@ -92,3 +92,28 @@ def get_generation(redis_client, task_id: str) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+# Production user-task lease renewal script. Imported by redis_manager.
+RENEW_RUNNING_SLOT_SCRIPT = """
+-- User-task lease renewal. All arguments are required.
+-- ARGV[1] = token
+-- ARGV[2] = new deadline
+-- ARGV[3] = task_id (must be non-empty)
+-- ARGV[4] = expected generation (must be non-empty positive integer)
+if ARGV[3] == "" or ARGV[4] == "" then
+    return 0
+end
+local expected = tonumber(ARGV[4])
+if not expected or expected < 1 then
+    return 0
+end
+if not redis.call("ZSCORE", KEYS[1], ARGV[1]) then
+    return 0
+end
+local gen = redis.call("HGET", ARGV[3], "generation")
+if not gen or tonumber(gen) ~= expected then
+    return 0
+end
+redis.call("ZADD", KEYS[1], "XX", ARGV[2], ARGV[1])
+return 1
+"""

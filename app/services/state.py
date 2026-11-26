@@ -223,20 +223,33 @@ class RedisState(BaseState):
         }
 
         expected = generation if generation is not None else current_generation.get()
-        if expected is not None:
-            # Fenced write: only succeed if Redis generation still matches.
-            from app.services.fencing import compare_and_write
-            success = compare_and_write(
-                self._redis,
-                task_id,
-                expected,
-                {field: self._serialize_field(field, value) for field, value in fields.items()},
-            )
-            if not success:
-                return False
-            return True
+        if expected is None or expected < 1:
+            # Worker mutations require a valid generation. No unfenced fallback.
+            return False
+        from app.services.fencing import compare_and_write
+        success = compare_and_write(
+            self._redis,
+            task_id,
+            expected,
+            {field: self._serialize_field(field, value) for field, value in fields.items()},
+        )
+        return bool(success)
 
-        # Legacy unfenced path (no generation bound). Prefer to avoid in new code.
+    def create_task(self, task_id: str, state: int = const.TASK_STATE_PROCESSING, progress: int = 0, **kwargs) -> bool:
+        """Explicit initial creation. Not for worker mutations.
+
+        Creates the task hash if it does not exist. Does not check generation.
+        Callers must be outside the worker trust boundary (API route after auth).
+        """
+        progress = int(progress)
+        if progress > 100:
+            progress = 100
+        fields = {
+            "task_id": task_id,
+            "state": state,
+            "progress": progress,
+            **kwargs,
+        }
         self._redis.hset(
             task_id,
             mapping={
@@ -245,6 +258,38 @@ class RedisState(BaseState):
             },
         )
         return True
+
+    def authorized_delete(self, task_id: str) -> bool:
+        """Explicit deletion after route-level ownership authorization.
+
+        Does not check generation. Caller must have already verified the
+        requesting user owns the task.
+        """
+        result = self._redis.eval(_DELETE_OWNED_TASK_SCRIPT, 1, task_id)
+        return bool(result)
+
+    def recovery_patch(self, task_id: str, **kwargs) -> bool:
+        """Narrow recovery update for queue dequeue failures.
+
+        Only allowed fields: state, failed_stage, error. Does not check
+        generation because the original worker may have died. Caller must
+        be the queue recovery path.
+        """
+        allowed = {"state", "failed_stage", "error"}
+        if not set(kwargs.keys()).issubset(allowed):
+            raise ValueError(f"recovery_patch only allows {allowed}")
+        if not kwargs:
+            return False
+        arguments = []
+        for field, value in kwargs.items():
+            arguments.extend((field, self._serialize_field(field, value)))
+        updated = self._redis.eval(
+            _PATCH_EXISTING_TASK_SCRIPT,
+            1,
+            task_id,
+            *arguments,
+        )
+        return bool(updated)
 
     def get_task(self, task_id: str):
         try:
@@ -273,52 +318,33 @@ class RedisState(BaseState):
     def patch_task(self, task_id: str, generation: int | None = None, **kwargs) -> bool:
         if not kwargs:
             return False
-
         expected = generation if generation is not None else current_generation.get()
-        if expected is not None:
-            from app.services.fencing import compare_and_write
-            fields = {
-                field: self._serialize_field(field, value)
-                for field, value in kwargs.items()
-            }
-            return compare_and_write(self._redis, task_id, expected, fields)
+        if expected is None or expected < 1:
+            return False
+        from app.services.fencing import compare_and_write
+        fields = {
+            field: self._serialize_field(field, value)
+            for field, value in kwargs.items()
+        }
+        return compare_and_write(self._redis, task_id, expected, fields)
 
-        arguments = []
-        for field, value in kwargs.items():
-            arguments.extend((field, self._serialize_field(field, value)))
-
-        # EXISTS 和 HSET 如果分成两条命令，后台发布线程与删除请求并发时，
-        # HSET 可能在删除后重新创建一条残缺任务。Lua 脚本由 Redis 原子执行，
-        # 可以保证任务不存在时不写入，且不会改变现有字段之外的数据。
-        updated = self._redis.eval(
-            _PATCH_EXISTING_TASK_SCRIPT,
-            1,
-            task_id,
-            *arguments,
-        )
-        return bool(updated)
-
-    def delete_task(self, task_id: str, generation: int | None = None):
+    def delete_task(self, task_id: str, generation: int | None = None) -> bool:
+        """Worker-originated delete. Requires valid generation. Returns actual result."""
         expected = generation if generation is not None else current_generation.get()
-        if expected is not None:
-            # Fenced delete: only delete if generation still matches.
-            script = """
-            if redis.call("TYPE", KEYS[1]).ok ~= "hash" then
-                return 0
-            end
-            local current = redis.call("HGET", KEYS[1], "generation")
-            if not current or tonumber(current) ~= tonumber(ARGV[1]) then
-                return 0
-            end
-            return redis.call("DEL", KEYS[1])
-            """
-            result = self._redis.eval(script, 1, task_id, str(expected))
-            return bool(result)
-
-        # 调用方读取任务后还会清理目录，同名键可能在这段时间被其它服务复用。
-        # 在一次 Lua 操作内检查类型、任务标记并删除，避免检查与删除之间的竞态。
-        self._redis.eval(_DELETE_OWNED_TASK_SCRIPT, 1, task_id)
-        return True
+        if expected is None or expected < 1:
+            return False
+        script = """
+        if redis.call("TYPE", KEYS[1]).ok ~= "hash" then
+            return 0
+        end
+        local current = redis.call("HGET", KEYS[1], "generation")
+        if not current or tonumber(current) ~= tonumber(ARGV[1]) then
+            return 0
+        end
+        return redis.call("DEL", KEYS[1])
+        """
+        result = self._redis.eval(script, 1, task_id, str(expected))
+        return bool(result)
 
     @staticmethod
     def _serialize_field(field, value):

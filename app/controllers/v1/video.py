@@ -301,7 +301,7 @@ def create_task(
             "request_id": request_id,
             "params": body.model_dump(),
         }
-        sm.state.update_task(task_id)
+        sm.state.create_task(task_id)
         try:
             ownership_store.create(
                 TaskOwnershipRecord(
@@ -317,7 +317,7 @@ def create_task(
             # If durable ownership persistence fails, roll back the state record
             # so we never leave an ownerless processing task.
             try:
-                sm.state.delete_task(task_id)
+                sm.state.authorized_delete(task_id)
             except Exception as cleanup_exc:
                 logger.error(
                     f"failed to clean task state after ownership failure, "
@@ -333,7 +333,7 @@ def create_task(
             # 接管任务（例如线程启动失败或 Redis 队列不可用），必须回滚该
             # 记录，否则 API 和 WebUI 会永久展示一个实际从未运行的任务。
             # Also remove the ownership record so it cannot become an orphan.
-            sm.state.delete_task(task_id)
+            sm.state.authorized_delete(task_id)
             try:
                 ownership_store.delete(task_id, user.sub)
             except Exception as cleanup_exc:
@@ -441,7 +441,7 @@ def delete_video(request: Request, task_id: str = Path(..., description="Task ID
                 if os.path.lexists(current_task_dir):
                     raise
 
-        sm.state.delete_task(task_id)
+        sm.state.authorized_delete(task_id)
         ownership_store.delete(task_id, user.sub)
         logger.success(f"video deleted: {utils.to_json(task)}")
         return utils.get_response(200)

@@ -111,6 +111,53 @@ _SUPPORTED_VIDEO_SOURCES = frozenset({
 })
 
 
+
+def _generation_scoped_output(task_id: str, final_name: str) -> tuple[str, str]:
+    """Return (temp_path, final_path) for generation-scoped output.
+
+    temp_path is unique to this generation so a stale worker cannot overwrite
+    a newer worker's published file. Promotion must verify ownership first.
+    """
+    from app.services.state import current_generation
+    gen = current_generation.get()
+    task_dir = utils.task_dir(task_id)
+    final_path = path.join(task_dir, final_name)
+    if gen is not None and gen >= 1:
+        temp_name = f"{final_name}.gen{gen}.tmp"
+        temp_path = path.join(task_dir, temp_name)
+    else:
+        temp_path = final_path
+    return temp_path, final_path
+
+
+def _promote_output_if_owner(task_id: str, temp_path: str, final_path: str) -> bool:
+    """Atomically promote temp to final only if this worker still owns the generation.
+
+    Returns True if promoted (or already final). Returns False if ownership lost;
+    in that case the temp file is removed.
+    """
+    from app.services.state import current_generation
+    from app.services.fencing import get_generation
+    gen = current_generation.get()
+    if gen is None or not hasattr(sm.state, "_redis"):
+        # Memory or unfenced: treat as owned
+        if temp_path != final_path and path.exists(temp_path):
+            os.replace(temp_path, final_path)
+        return True
+    stored = get_generation(sm.state._redis, task_id)
+    if stored != gen:
+        # Lost ownership. Clean up only our temp.
+        if path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+        return False
+    if temp_path != final_path:
+        os.replace(temp_path, final_path)
+    return True
+
+
 def _get_video_music_prompt(params: VideoParams) -> str:
     """
     读取当前视频配乐供应商实际使用的提示词。
@@ -1128,7 +1175,7 @@ def generate_final_videos(
         _progress += 50 / params.video_count / 2
         sm.state.update_task(task_id, progress=_progress)
 
-        final_video_path = path.join(utils.task_dir(task_id), f"final-{index}.mp4")
+        temp_video_path, final_video_path = _generation_scoped_output(task_id, f"final-{index}.mp4")
 
         # 视频配乐模式先明确禁用默认 BGM 解析，避免旧任务残留的 bgm_file 被
         # 误用。只有音量大于 0 才生成代理并调用付费 API；0 音量统一跳过。
@@ -1164,7 +1211,7 @@ def generate_final_videos(
             video_path=combined_video_path,
             audio_path=audio_file,
             subtitle_path=subtitle_path,
-            output_file=final_video_path,
+            output_file=temp_video_path,
             params=params,
             bgm_file_override=bgm_file_override,
         )
@@ -1183,6 +1230,9 @@ def generate_final_videos(
                 }
             )
 
+        if not _promote_output_if_owner(task_id, temp_video_path, final_video_path):
+            logger.error(f"lost generation ownership before promoting output for {task_id}; discarding")
+            return [], [], warnings
         final_video_paths.append(final_video_path)
         combined_video_paths.append(combined_video_path)
         _progress += 50 / params.video_count / 2
@@ -2025,6 +2075,10 @@ def _run_pipeline(
     return kwargs
 
 
+class GenerationAcquisitionError(RuntimeError):
+    """Raised when a Redis-backed worker cannot acquire a fencing generation."""
+
+
 def start(
     task_id,
     params: VideoParams,
@@ -2037,6 +2091,7 @@ def start(
     voxcpm_prompt_text: str = "",
     jalapeno_video_endpoint: volcengine_seedance.SeedanceEndpoint | None = None,
     codex_image_context: codex_image.CodexImageContext | None = None,
+    _generation_handoff=None,
 ):
     """
     执行任务流水线，并确保未预期异常也会转换成可查询的失败状态。
@@ -2044,11 +2099,27 @@ def start(
     ``allow_server_file_input`` 只供本机 CLI 使用。HTTP API 和 WebUI 必须保持
     默认值，让自定义音频始终受当前任务目录约束。
     """
-    # Acquire a new fencing generation before any pipeline work. Bind it for
-    # the duration of this execution so all RedisState mutations are fenced.
+    # Acquire a new fencing generation before any pipeline work.
+    # Redis-backed execution must obtain a valid generation or fail closed.
+    is_redis = hasattr(sm.state, "_redis")
     generation = None
-    if hasattr(sm.state, "_redis"):
-        generation = acquire_generation(sm.state._redis, task_id)
+    if is_redis:
+        try:
+            generation = acquire_generation(sm.state._redis, task_id)
+        except Exception as exc:
+            logger.error(f"generation acquisition failed for {task_id}: {exc}")
+            if _generation_handoff is not None:
+                _generation_handoff.fail()
+            raise GenerationAcquisitionError(f"failed to acquire generation: {exc}") from exc
+        if generation is None or generation < 1:
+            if _generation_handoff is not None:
+                _generation_handoff.fail()
+            raise GenerationAcquisitionError(
+                f"acquire_generation returned invalid value {generation!r} for {task_id}"
+            )
+    # Publish to heartbeat before pipeline work. Heartbeat waits on this.
+    if _generation_handoff is not None:
+        _generation_handoff.publish(generation)
     token = current_generation.set(generation)
     try:
         with generation_progress.task_scope(task_id):

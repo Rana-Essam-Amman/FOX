@@ -219,6 +219,89 @@ class TestMemoryState(unittest.TestCase):
             state.recovery_patch("match", expected_generation=1, state=-1, error="gone")
         )
 
+        # Boolean expected_generation is rejected (True is not generation 1).
+        state.update_task("bool", state=const.TASK_STATE_PROCESSING, generation=1)
+        self.assertFalse(
+            state.recovery_patch("bool", expected_generation=True, state=-1, error="no")
+        )
+        self.assertFalse(
+            state.recovery_patch("bool", expected_generation=False, state=-1, error="no")
+        )
+        self.assertEqual(state.get_task("bool")["state"], const.TASK_STATE_PROCESSING)
+
+        # Malformed stored generation fails closed.
+        state.update_task("malformed", state=const.TASK_STATE_PROCESSING, generation="invalid")
+        self.assertFalse(
+            state.recovery_patch("malformed", expected_generation=1, state=-1, error="no")
+        )
+        self.assertEqual(state.get_task("malformed")["state"], const.TASK_STATE_PROCESSING)
+
+        # Non-integer expected types fail closed.
+        self.assertFalse(
+            state.recovery_patch("bool", expected_generation="1", state=-1, error="no")
+        )
+        self.assertFalse(
+            state.recovery_patch("bool", expected_generation=1.5, state=-1, error="no")
+        )
+        self.assertEqual(state.get_task("bool")["state"], const.TASK_STATE_PROCESSING)
+
+    def test_concurrent_memory_updates_are_preserved(self):
+        state = MemoryState()
+        thread_count = 5
+        tasks_per_thread = 50
+
+        def update_tasks(thread_index):
+            for task_index in range(tasks_per_thread):
+                state.update_task(
+                    f"task-{thread_index}-{task_index}",
+                    state=const.TASK_STATE_PROCESSING,
+                    progress=task_index,
+                )
+
+        threads = [
+            threading.Thread(target=update_tasks, args=(thread_index,))
+            for thread_index in range(thread_count)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        tasks, total = state.get_all_tasks(page=1, page_size=thread_count * tasks_per_thread)
+
+        self.assertEqual(total, thread_count * tasks_per_thread)
+        self.assertEqual(len(tasks), total)
+
+    def test_patch_task_preserves_generated_outputs(self):
+        """异步发布更新不能覆盖已经完成的视频任务字段。"""
+        state = MemoryState()
+        state.update_task(
+            "task-1",
+            state=const.TASK_STATE_COMPLETE,
+            progress=100,
+            videos=["final.mp4"],
+        )
+
+        patched = state.patch_task(
+            "task-1",
+            cross_post_state=const.CROSS_POST_STATE_COMPLETE,
+            cross_post_results=[{"success": True}],
+        )
+
+        self.assertTrue(patched)
+        self.assertEqual(
+            state.get_task("task-1"),
+            {
+                "task_id": "task-1",
+                "state": const.TASK_STATE_COMPLETE,
+                "progress": 100,
+                "videos": ["final.mp4"],
+                "cross_post_state": const.CROSS_POST_STATE_COMPLETE,
+                "cross_post_results": [{"success": True}],
+            },
+        )
+        self.assertFalse(state.patch_task("missing", value="ignored"))
+
 
 class TestRedisState(unittest.TestCase):
     def test_update_task_requires_generation_and_fails_closed(self):

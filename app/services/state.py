@@ -159,11 +159,13 @@ class MemoryState(BaseState):
         """Narrow recovery update for queue dequeue failures.
 
         Semantics match RedisState / compare_and_write exactly:
-        - expected_generation must be None or a positive integer.
-        - If a positive integer, the stored generation must exist and match exactly.
+        - expected_generation must be None or a positive integer (not bool).
+        - If a positive integer, the stored generation must exist, be a valid
+          integer, and match exactly.
         - If None, recovery is allowed only when the task has no generation
           (never-started).
-        - Zero, negative, or otherwise invalid generations fail closed.
+        - Zero, negative, boolean, or otherwise invalid generations fail closed.
+        - Malformed stored generation values fail closed.
         - Never recreates a deleted task.
         - Only allows state, failed_stage, error.
         """
@@ -181,13 +183,16 @@ class MemoryState(BaseState):
                 # Never-started recovery only.
                 if stored_gen is not None:
                     return False
-            elif isinstance(expected_generation, int) and expected_generation >= 1:
-                # Exact match required; absent generation is rejected.
-                if stored_gen is None or int(stored_gen) != expected_generation:
-                    return False
-            else:
-                # Zero, negative, or non-integer: fail closed.
+            elif isinstance(expected_generation, bool) or not isinstance(expected_generation, int) or expected_generation < 1:
+                # Booleans (True/False), non-integers, zero, negative: fail closed.
                 return False
+            else:
+                # Exact match required; absent or malformed generation is rejected.
+                try:
+                    if stored_gen is None or int(stored_gen) != expected_generation:
+                        return False
+                except (TypeError, ValueError):
+                    return False
             task.update(copy.deepcopy(kwargs))
             return True
 

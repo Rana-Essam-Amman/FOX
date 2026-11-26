@@ -771,20 +771,30 @@ class TestVideoControllerFiles(unittest.TestCase):
 
     def test_stream_video_returns_requested_bytes(self):
         """Range 响应的正文和 Content-Range 必须与计算出的区间一致。"""
+        from app.security.jwt_auth import AuthenticatedUser
+        from app.security.ownership import InMemoryOwnershipStore, TaskOwnershipRecord
+        from datetime import datetime, timezone
 
         async def consume(response):
             return b"".join([chunk async for chunk in response.body_iterator])
 
+        user = AuthenticatedUser(sub="test-user")
+        store = InMemoryOwnershipStore()
+        store.create(TaskOwnershipRecord(
+            task_id="clip.mp4", owner_id="test-user",
+            created_at=datetime.now(timezone.utc), kind="video",
+            metadata={},
+        ))
         with tempfile.TemporaryDirectory() as temp_dir:
             Path(temp_dir, "clip.mp4").write_bytes(b"0123456789")
             with patch.object(
                 video_controller.utils,
                 "task_dir",
                 return_value=temp_dir,
-            ):
+            ), patch("app.security.ownership.ownership_store", store):
                 response = asyncio.run(
                     video_controller.stream_video(
-                        self._request("bytes=2-5"), "clip.mp4"
+                        self._request("bytes=2-5"), "clip.mp4", user=user
                     )
                 )
                 body = asyncio.run(consume(response))
@@ -796,15 +806,26 @@ class TestVideoControllerFiles(unittest.TestCase):
 
     def test_stream_video_without_range_returns_complete_response(self):
         """A normal GET must return the whole video as 200, not partial content."""
+        from app.security.jwt_auth import AuthenticatedUser
+        from app.security.ownership import InMemoryOwnershipStore, TaskOwnershipRecord
+        from datetime import datetime, timezone
 
         async def consume(response):
             return b"".join([chunk async for chunk in response.body_iterator])
 
+        user = AuthenticatedUser(sub="test-user")
+        store = InMemoryOwnershipStore()
+        store.create(TaskOwnershipRecord(
+            task_id="clip.mp4", owner_id="test-user",
+            created_at=datetime.now(timezone.utc), kind="video",
+            metadata={},
+        ))
         with tempfile.TemporaryDirectory() as temp_dir:
             Path(temp_dir, "clip.mp4").write_bytes(b"0123456789")
-            with patch.object(video_controller.utils, "task_dir", return_value=temp_dir):
+            with patch.object(video_controller.utils, "task_dir", return_value=temp_dir), \
+                    patch("app.security.ownership.ownership_store", store):
                 response = asyncio.run(
-                    video_controller.stream_video(self._request(), "clip.mp4")
+                    video_controller.stream_video(self._request(), "clip.mp4", user=user)
                 )
                 body = asyncio.run(consume(response))
 

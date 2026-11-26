@@ -28,6 +28,25 @@ end
 return 1
 """
 
+_ATOMIC_NO_GEN_RECOVERY_SCRIPT = """
+local key = KEYS[1]
+if redis.call('TYPE', key).ok ~= 'hash' then
+    return 0
+end
+local tid = redis.call('HGET', key, 'task_id')
+if tid ~= ARGV[1] then
+    return 0
+end
+local gen = redis.call('HGET', key, 'generation')
+if gen and gen ~= '' and gen ~= '0' then
+    return 0
+end
+for i = 2, #ARGV, 2 do
+    redis.call('HSET', key, ARGV[i], ARGV[i+1])
+end
+return 1
+"""
+
 
 _DELETE_OWNED_TASK_SCRIPT = """
 if redis.call("TYPE", KEYS[1]).ok ~= "hash" then
@@ -288,16 +307,14 @@ class RedisState(BaseState):
                 return bool(compare_and_write(
                     self._redis, task_id, expected_generation, kwargs
                 ))
-            # No generation proven. Only mark FAILED if the task has never
-            # acquired a generation (still the original admission).
-            raw = self._redis.hget(task_id, "generation")
-            if raw is not None:
-                # A generation exists; do not touch a newer attempt.
-                return False
-            # No generation: safe to mark the never-started task FAILED.
+            # Atomic no-generation recovery: Lua verifies key, task_id, and
+            # that generation is still absent, then writes. No TOCTOU window.
+            args = [task_id]
+            for k, v in kwargs.items():
+                args.append(k)
+                args.append(self._serialize_field(k, v))
             return bool(self._redis.eval(
-                _PATCH_EXISTING_TASK_SCRIPT, 1, task_id,
-                *sum(([k, self._serialize_field(k, v)] for k, v in kwargs.items()), []),
+                _ATOMIC_NO_GEN_RECOVERY_SCRIPT, 1, task_id, *args
             ))
         except Exception:
             return False

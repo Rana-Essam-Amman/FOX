@@ -317,23 +317,27 @@ class RedisTaskManager(TaskManager):
                 # Safe terminal: no generation yet (never started), so recovery
                 # can mark FAILED without risking a newer attempt.
                 try:
-                    sm.state.recovery_patch(
+                    ok = sm.state.recovery_patch(
                         task_id, state=-1, failed_stage="authorization",
                         error=f"authorization denied: {exc}",
                     )
-                except Exception:
-                    pass
+                    if not ok:
+                        logger.error(f"authorization denial recovery failed for {task_id}; task may remain PROCESSING")
+                except Exception as rec_exc:
+                    logger.error(f"authorization denial recovery raised for {task_id}: {rec_exc}")
                 return
             except Exception as exc:
                 logger.error(f"ownership store error for {task_id}: {exc}")
                 handoff.fail()
                 try:
-                    sm.state.recovery_patch(
+                    ok = sm.state.recovery_patch(
                         task_id, state=-1, failed_stage="authorization",
                         error=f"ownership store error: {exc}",
                     )
-                except Exception:
-                    pass
+                    if not ok:
+                        logger.error(f"ownership-store-error recovery failed for {task_id}; task may remain PROCESSING")
+                except Exception as rec_exc:
+                    logger.error(f"ownership-store-error recovery raised for {task_id}: {rec_exc}")
                 return
             func(*args, **kwargs)
         finally:

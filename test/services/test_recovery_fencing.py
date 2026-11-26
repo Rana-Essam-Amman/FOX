@@ -79,3 +79,19 @@ def test_recovery_deleted_task_returns_false(redis_client):
     state._redis = client
     # Never created
     assert state.recovery_patch(task_id, state=-1) is False
+
+def test_recovery_atomic_rejects_if_generation_acquired(redis_client):
+    """Atomic script rejects no-gen recovery if generation exists at script time."""
+    client, created = redis_client
+    task_id = "test-rec-atomic"
+    created.append(task_id)
+    state = RedisState(host="localhost", port=6379, db=4)
+    state._redis = client
+    state.create_task(task_id, state=4)
+    # Acquire generation first
+    acquire_generation(client, task_id)
+    # No-gen recovery must fail atomically
+    assert state.recovery_patch(task_id, state=-1, error="stale") is False
+    stored = state.get_task(task_id)
+    assert stored.get("state") == 4
+    assert stored.get("generation") is not None

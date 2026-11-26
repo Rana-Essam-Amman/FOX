@@ -1,7 +1,6 @@
 from unittest.mock import patch
 
 import pytest
-from fastapi.testclient import TestClient
 from PIL import Image, ImageDraw
 
 from app import asgi
@@ -10,12 +9,20 @@ from app.controllers.v1 import video as controller
 from app.models.schema import VideoParams
 from app.services import state as sm
 from app.services import task
+from app.security import jwt_auth
+from test.services._oidc_test_authority import authed_client, shared_authority
+
+
+@pytest.fixture(autouse=True)
+def _oidc_verifier(monkeypatch):
+    # Real RS256/JWKS verification for every request in this module; restored after each test.
+    monkeypatch.setattr(jwt_auth, "jwt_verifier", shared_authority().verifier())
 
 
 @pytest.mark.parametrize("field", ["text_fore_color", "stroke_color", "text_background_color"])
 def test_http_rejects_invalid_active_color_before_queue(field):
     with patch.dict(config.app, {"api_key": ""}), patch.object(sm, "state", sm.MemoryState()), patch.object(controller.task_manager, "add_task") as queued:
-        with TestClient(asgi.app) as client:
+        with authed_client(asgi.app) as client:
             response = client.post("/api/v1/videos", json={"video_subject": "Coffee", field: "#gg0000"})
         assert response.status_code == 400
         assert field in response.json()["message"]
@@ -50,7 +57,7 @@ def test_http_preserves_supported_pillow_colors_and_unused_stroke(colors):
     if isinstance(background, str):
         Image.new("RGBA", (1, 1), background)
     with patch.dict(config.app, {"api_key": ""}), patch.object(sm, "state", sm.MemoryState()), patch.object(controller.task_manager, "add_task") as queued:
-        with TestClient(asgi.app) as client:
+        with authed_client(asgi.app) as client:
             response = client.post("/api/v1/videos", json={"video_subject": "Coffee", **colors})
         assert response.status_code == 200
         queued.assert_called_once()
@@ -62,7 +69,7 @@ def test_http_preserves_supported_pillow_colors_and_unused_stroke(colors):
 ])
 def test_http_does_not_validate_colors_that_will_not_render(endpoint, payload):
     with patch.dict(config.app, {"api_key": ""}), patch.object(sm, "state", sm.MemoryState()), patch.object(controller.task_manager, "add_task") as queued:
-        with TestClient(asgi.app) as client:
+        with authed_client(asgi.app) as client:
             response = client.post(endpoint, json={**payload, "text_fore_color": "unused-color"})
         assert response.status_code == 200
         queued.assert_called_once()

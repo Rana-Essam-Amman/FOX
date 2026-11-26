@@ -15,6 +15,14 @@ from app.models.llm_provider import get_llm_provider
 from app.models.schema import MaterialInfo, VideoParams
 from app.services import jalapeno_video as provider, llm, material, state, task
 from app.services import volcengine_seedance as seedance
+from app.security import jwt_auth
+from test.services._oidc_test_authority import shared_authority
+
+
+@pytest.fixture(autouse=True)
+def _oidc_verifier(monkeypatch):
+    # Real RS256/JWKS verification for every request in this module; restored after each test.
+    monkeypatch.setattr(jwt_auth, "jwt_verifier", shared_authority().verifier())
 
 
 @pytest.fixture(autouse=True)

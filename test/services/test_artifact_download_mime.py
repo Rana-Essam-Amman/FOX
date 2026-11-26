@@ -3,11 +3,18 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 import pytest
-from fastapi.testclient import TestClient
 
 from app import asgi
 from app.config import config
 from app.controllers.v1 import video as controller
+from app.security import jwt_auth
+from test.services._oidc_test_authority import authed_client, shared_authority
+
+
+@pytest.fixture(autouse=True)
+def _oidc_verifier(monkeypatch):
+    # Real RS256/JWKS verification for every request in this module; restored after each test.
+    monkeypatch.setattr(jwt_auth, "jwt_verifier", shared_authority().verifier())
 
 
 @pytest.mark.parametrize('filename,expected', [
@@ -28,7 +35,7 @@ def test_download_reports_artifact_media_type(filename, expected):
             patch.dict(config.app, {'api_key': ''}),
             patch.object(controller.utils, 'task_dir', return_value=directory),
         ):
-            response = TestClient(asgi.get_application()).get(f'/api/v1/download/task-1/{filename}')
+            response = authed_client(asgi.get_application()).get(f'/api/v1/download/task-1/{filename}')
     assert response.status_code == 200
     assert response.content == payload
     assert response.headers['content-type'].split(';')[0] in (expected if isinstance(expected, tuple) else (expected,))

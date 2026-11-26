@@ -1,10 +1,17 @@
 from unittest.mock import patch
 
 import pytest
-from fastapi.testclient import TestClient
 
 from app import asgi
 from app.config import config
+from app.security import jwt_auth
+from test.services._oidc_test_authority import authed_client, shared_authority
+
+
+@pytest.fixture(autouse=True)
+def _oidc_verifier(monkeypatch):
+    # Real RS256/JWKS verification for every request in this module; restored after each test.
+    monkeypatch.setattr(jwt_auth, "jwt_verifier", shared_authority().verifier())
 
 
 def _post(path, content):
@@ -12,7 +19,7 @@ def _post(path, content):
         patch.dict(config.app, {"api_key": ""}),
         patch("app.controllers.v1.video.task_manager.add_task") as schedule,
         patch("app.controllers.v1.llm.llm.generate_script") as generate,
-        TestClient(asgi.get_application(), raise_server_exceptions=False) as client,
+        authed_client(asgi.get_application(), raise_server_exceptions=False) as client,
     ):
         response = client.post(
             path, content=content, headers={"content-type": "application/json"}

@@ -3,11 +3,18 @@
 from unittest.mock import patch
 
 import pytest
-from fastapi.testclient import TestClient
 
 from app import asgi
 from app.config import config
 from app.controllers.v1 import video as controller
+from app.security import jwt_auth
+from test.services._oidc_test_authority import authed_client, shared_authority
+
+
+@pytest.fixture(autouse=True)
+def _oidc_verifier(monkeypatch):
+    # Real RS256/JWKS verification for every request in this module; restored after each test.
+    monkeypatch.setattr(jwt_auth, "jwt_verifier", shared_authority().verifier())
 
 
 @pytest.fixture
@@ -19,7 +26,7 @@ def client(tmp_path):
     with patch.dict(config.app, {"api_key": ""}), patch.object(
         controller.utils, "task_dir", return_value=str(tmp_path)
     ):
-        yield TestClient(asgi.get_application())
+        yield authed_client(asgi.get_application())
 
 
 @pytest.mark.parametrize("endpoint", ["stream", "download"])

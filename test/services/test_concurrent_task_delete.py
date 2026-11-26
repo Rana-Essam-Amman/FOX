@@ -6,13 +6,20 @@ from threading import Barrier, Lock
 from unittest.mock import patch
 
 import pytest
-from fastapi.testclient import TestClient
 
 from app import asgi
 from app.config import config
 from app.controllers.v1 import video as controller
 from app.models import const
 from app.services.state import MemoryState
+from app.security import jwt_auth
+from test.services._oidc_test_authority import authed_client, shared_authority
+
+
+@pytest.fixture(autouse=True)
+def _oidc_verifier(monkeypatch):
+    # Real RS256/JWKS verification for every request in this module; restored after each test.
+    monkeypatch.setattr(jwt_auth, "jwt_verifier", shared_authority().verifier())
 
 
 def test_concurrent_task_deletions_do_not_return_server_error():
@@ -47,7 +54,7 @@ def test_concurrent_task_deletions_do_not_return_server_error():
             patch.object(controller.shutil, 'rmtree', side_effect=sequential_removal),
             ThreadPoolExecutor(max_workers=2) as executor,
         ):
-            client = TestClient(asgi.get_application(), raise_server_exceptions=False)
+            client = authed_client(asgi.get_application(), raise_server_exceptions=False)
             responses = list(executor.map(lambda _: client.delete('/api/v1/tasks/task-1'), range(2)))
         assert sorted(response.status_code for response in responses) == [200, 200]
         assert not target.exists()
@@ -67,7 +74,7 @@ def test_delete_preserves_state_when_directory_still_exists(error):
             patch.object(controller.utils, 'task_dir', return_value=directory),
             patch.object(controller.shutil, 'rmtree', side_effect=error),
         ):
-            response = TestClient(asgi.get_application(), raise_server_exceptions=False).delete('/api/v1/tasks/task-1')
+            response = authed_client(asgi.get_application(), raise_server_exceptions=False).delete('/api/v1/tasks/task-1')
         assert response.status_code == 500
         assert target.is_dir()
         assert state.get_task('task-1') is not None

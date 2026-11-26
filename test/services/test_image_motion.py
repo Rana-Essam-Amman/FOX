@@ -13,6 +13,14 @@ import cli
 from app.config import config
 from app.models.schema import ImageMotion, MaterialInfo, TaskVideoRequest, VideoParams
 from app.services import material, task, video
+from app.security import jwt_auth
+from test.services._oidc_test_authority import authed_client, shared_authority
+
+
+@pytest.fixture(autouse=True)
+def _oidc_verifier(monkeypatch):
+    # Real RS256/JWKS verification for every request in this module; restored after each test.
+    monkeypatch.setattr(jwt_auth, "jwt_verifier", shared_authority().verifier())
 
 
 def test_old_requests_keep_zoom_and_invalid_motion_is_rejected():
@@ -23,7 +31,6 @@ def test_old_requests_keep_zoom_and_invalid_motion_is_rejected():
 
 
 def test_api_motion_reaches_task_queue_and_rejects_invalid_input():
-    from fastapi.testclient import TestClient
     from app import asgi
     from app.controllers.v1 import video as controller
 
@@ -32,7 +39,7 @@ def test_api_motion_reaches_task_queue_and_rejects_invalid_input():
         patch.object(controller.task_manager, "add_task") as enqueue,
         patch.object(controller.sm.state, "update_task"),
     ):
-        client = TestClient(asgi.app)
+        client = authed_client(asgi.app)
         for value, expected in ((None, "zoom"), ("static", "static"), ("zoom", "zoom")):
             payload = {"video_subject": "test", "subtitle_enabled": False}
             if value is not None:

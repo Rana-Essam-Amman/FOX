@@ -11,7 +11,6 @@ from uuid import uuid4
 import pytest
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-from fastapi.testclient import TestClient
 from redis.exceptions import ResponseError
 
 from app.config import config
@@ -19,6 +18,14 @@ from app.controllers.v1 import video
 from app.models import const
 from app.models.exception import HttpException
 from app.services.state import RedisState, _DELETE_OWNED_TASK_SCRIPT
+from app.security import jwt_auth
+from test.services._oidc_test_authority import authed_client, shared_authority
+
+
+@pytest.fixture(autouse=True)
+def _oidc_verifier(monkeypatch):
+    # Real RS256/JWKS verification for every request in this module; restored after each test.
+    monkeypatch.setattr(jwt_auth, "jwt_verifier", shared_authority().verifier())
 
 
 def test_delete_checks_ownership_and_deletes_in_one_command():
@@ -166,7 +173,7 @@ def deletion_client(native_state, tmp_path):
         patch.object(video.sm, "state", state),
         patch.object(video.utils, "task_dir", return_value=str(tmp_path)),
         patch.object(config, "app", dict(config.app, api_key="test-delete-api-key")),
-        TestClient(application) as client,
+        authed_client(application) as client,
     ):
         yield client
 

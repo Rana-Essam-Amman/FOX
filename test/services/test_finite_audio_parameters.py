@@ -2,11 +2,18 @@ import json
 from unittest.mock import patch
 
 import pytest
-from fastapi.testclient import TestClient
 from app import asgi
 from app.config import config
 from app.models.schema import AudioRequest, SubtitleRequest, TaskVideoRequest
 from app.services import state as sm
+from app.security import jwt_auth
+from test.services._oidc_test_authority import authed_client, shared_authority
+
+
+@pytest.fixture(autouse=True)
+def _oidc_verifier(monkeypatch):
+    # Real RS256/JWKS verification for every request in this module; restored after each test.
+    monkeypatch.setattr(jwt_auth, "jwt_verifier", shared_authority().verifier())
 
 
 @pytest.mark.parametrize("number", ["NaN", "Infinity", "-Infinity", '"NaN"', '"Infinity"'])
@@ -17,7 +24,7 @@ def test_nonfinite_audio_values_fail_before_background_work(path, field, number)
         patch.dict(config.app, {"api_key": ""}),
         patch.object(sm, "state", sm.MemoryState()),
         patch("app.controllers.v1.video.task_manager.add_task") as schedule,
-        TestClient(asgi.get_application(), raise_server_exceptions=False) as client,
+        authed_client(asgi.get_application(), raise_server_exceptions=False) as client,
     ):
         response = client.post(path, content='{"video_subject":"test","video_script":"hello","' + field + '":' + number + '}', headers={"content-type": "application/json"})
     assert response.status_code == 400

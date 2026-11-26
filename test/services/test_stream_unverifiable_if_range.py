@@ -1,11 +1,18 @@
 from unittest.mock import patch
 
 import pytest
-from fastapi.testclient import TestClient
 
 from app import asgi
 from app.config import config
 from app.controllers.v1 import video as controller
+from app.security import jwt_auth
+from test.services._oidc_test_authority import authed_client, shared_authority
+
+
+@pytest.fixture(autouse=True)
+def _oidc_verifier(monkeypatch):
+    # Real RS256/JWKS verification for every request in this module; restored after each test.
+    monkeypatch.setattr(jwt_auth, "jwt_verifier", shared_authority().verifier())
 
 
 @pytest.mark.parametrize('validator', ['"older-video-revision"', 'Tue, 01 Jan 2019 00:00:00 GMT'])
@@ -13,7 +20,7 @@ def test_stream_returns_complete_video_for_unverifiable_if_range(tmp_path, valid
     payload = b'complete current video fixture'
     (tmp_path / 'clip.mp4').write_bytes(payload)
     with patch.dict(config.app, {'api_key': ''}), patch.object(controller.utils, 'task_dir', return_value=str(tmp_path)):
-        response = TestClient(asgi.get_application()).get('/api/v1/stream/clip.mp4', headers={
+        response = authed_client(asgi.get_application()).get('/api/v1/stream/clip.mp4', headers={
             'Range': 'bytes=9-', 'If-Range': validator,
         })
     assert response.status_code == 200
@@ -25,6 +32,6 @@ def test_stream_returns_complete_video_for_unverifiable_if_range(tmp_path, valid
 def test_stream_keeps_unconditional_partial_request(tmp_path):
     (tmp_path / 'clip.mp4').write_bytes(b'0123456789')
     with patch.dict(config.app, {'api_key': ''}), patch.object(controller.utils, 'task_dir', return_value=str(tmp_path)):
-        response = TestClient(asgi.get_application()).get('/api/v1/stream/clip.mp4', headers={'Range': 'bytes=3-'})
+        response = authed_client(asgi.get_application()).get('/api/v1/stream/clip.mp4', headers={'Range': 'bytes=3-'})
     assert response.status_code == 206
     assert response.content == b'3456789'

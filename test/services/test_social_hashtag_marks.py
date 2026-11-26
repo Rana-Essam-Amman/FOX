@@ -4,11 +4,18 @@ import json
 import unicodedata
 from unittest.mock import patch
 
-from fastapi.testclient import TestClient
 import pytest
 
 from app.asgi import app
 from app.services import llm
+from app.security import jwt_auth
+from test.services._oidc_test_authority import authed_client, shared_authority
+
+
+@pytest.fixture(autouse=True)
+def _oidc_verifier(monkeypatch):
+    # Real RS256/JWKS verification for every request in this module; restored after each test.
+    monkeypatch.setattr(jwt_auth, "jwt_verifier", shared_authority().verifier())
 
 
 @pytest.mark.parametrize(
@@ -96,7 +103,7 @@ def test_social_metadata_api_uses_cleaned_tags_without_displacing_valid_ones(pla
         ensure_ascii=False,
     )
     with patch.object(llm, "_generate_response", return_value=response_text):
-        response = TestClient(app).post(
+        response = authed_client(app).post(
             "/api/v1/social-metadata",
             json={"video_subject": "旅行", "platform": platform},
         )
@@ -119,7 +126,7 @@ def test_keycap_tags_do_not_displace_other_youtube_tags():
         ensure_ascii=False,
     )
     with patch.object(llm, "_generate_response", return_value=response_text):
-        response = TestClient(app).post(
+        response = authed_client(app).post(
             "/api/v1/social-metadata",
             json={"video_subject": "旅行", "platform": "youtube_shorts"},
         )

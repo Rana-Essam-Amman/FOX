@@ -133,6 +133,7 @@ class MemoryState(BaseState):
                 "progress": progress,
                 **copy.deepcopy(kwargs),
             }
+        return True
 
     def get_task(self, task_id: str):
         with self._lock:
@@ -147,6 +148,35 @@ class MemoryState(BaseState):
             task = self._tasks.get(task_id)
             if task is None:
                 return False
+            task.update(copy.deepcopy(kwargs))
+            return True
+
+    def recovery_patch(self, task_id: str, expected_generation: int | None = None, **kwargs) -> bool:
+        """Narrow recovery update for queue dequeue failures.
+
+        Compatible with RedisState semantics for in-memory execution:
+        - If expected_generation is provided (>=1), succeed only if the stored
+          generation matches (or is absent for never-started tasks when None).
+        - Never recreates a deleted task.
+        - Only allows state, failed_stage, error.
+        """
+        allowed = {"state", "failed_stage", "error"}
+        if not set(kwargs.keys()).issubset(allowed):
+            raise ValueError(f"recovery_patch only allows {allowed}")
+        if not kwargs:
+            return False
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                return False
+            stored_gen = task.get("generation")
+            if expected_generation is not None and expected_generation >= 1:
+                if stored_gen is not None and int(stored_gen) != expected_generation:
+                    return False
+            elif expected_generation is None:
+                # Only allow when never started (no generation).
+                if stored_gen is not None:
+                    return False
             task.update(copy.deepcopy(kwargs))
             return True
 

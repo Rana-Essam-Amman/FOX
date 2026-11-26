@@ -422,12 +422,12 @@ class TestRedisTaskManager(unittest.TestCase):
         self.redis_client.lpop.side_effect = [json.dumps(stale_payload), None]
 
         with patch("app.controllers.manager.redis_manager.sm.state") as state:
-            state.patch_task.return_value = True
+            state.recovery_patch.return_value = True
             result = self.manager.dequeue()
 
         self.assertIsNone(result)
-        state.patch_task.assert_called_once()
-        call_args = state.patch_task.call_args
+        state.recovery_patch.assert_called_once()
+        call_args = state.recovery_patch.call_args
         self.assertEqual(call_args.args[0], "task-stale")
         self.assertEqual(call_args.kwargs["state"], const.TASK_STATE_FAILED)
         self.assertEqual(call_args.kwargs["failed_stage"], "dequeue")
@@ -448,11 +448,11 @@ class TestRedisTaskManager(unittest.TestCase):
         self.redis_client.lpop.side_effect = [json.dumps(stale_payload), None]
 
         with patch("app.controllers.manager.redis_manager.sm.state") as state:
-            state.patch_task.return_value = False
+            state.recovery_patch.return_value = False
             result = self.manager.dequeue()
 
         self.assertIsNone(result)
-        state.patch_task.assert_called_once()
+        state.recovery_patch.assert_called_once()
         state.update_task.assert_not_called()
 
     def test_dequeue_skips_task_with_unknown_function_name(self):
@@ -467,14 +467,14 @@ class TestRedisTaskManager(unittest.TestCase):
         ]
 
         with patch("app.controllers.manager.redis_manager.sm.state") as state:
-            state.patch_task.return_value = True
+            state.recovery_patch.return_value = True
             task = self.manager.dequeue()
 
         self.assertEqual(self.redis_client.lpop.call_count, 2)
         self.assertIs(task["func"], task_service.start)
         self.assertEqual(task["kwargs"]["task_id"], "task-valid")
-        state.patch_task.assert_called_once()
-        call_args = state.patch_task.call_args
+        state.recovery_patch.assert_called_once()
+        call_args = state.recovery_patch.call_args
         self.assertEqual(call_args.args[0], "task-unknown-func")
         self.assertEqual(call_args.kwargs["state"], const.TASK_STATE_FAILED)
         self.assertIn("start_test", call_args.kwargs["error"])
@@ -494,16 +494,16 @@ class TestRedisTaskManager(unittest.TestCase):
         ]
 
         with patch("app.controllers.manager.redis_manager.sm.state") as state:
-            state.patch_task.return_value = True
+            state.recovery_patch.return_value = True
             task = self.manager.dequeue()
 
         self.assertEqual(self.redis_client.lpop.call_count, 4)
         self.assertIs(task["func"], task_service.start)
         self.assertEqual(task["kwargs"]["task_id"], "task-valid")
-        state.patch_task.assert_called_once()
-        self.assertEqual(state.patch_task.call_args.args[0], "task-retired")
+        state.recovery_patch.assert_called_once()
+        self.assertEqual(state.recovery_patch.call_args.args[0], "task-retired")
         self.assertEqual(
-            state.patch_task.call_args.kwargs["state"], const.TASK_STATE_FAILED
+            state.recovery_patch.call_args.kwargs["state"], const.TASK_STATE_FAILED
         )
 
     def test_dequeue_returns_none_when_only_unusable_entries_remain(self):
@@ -576,21 +576,21 @@ class TestRedisTaskManager(unittest.TestCase):
                 ]
 
                 with patch("app.controllers.manager.redis_manager.sm.state") as state:
-                    state.patch_task.return_value = True
+                    state.recovery_patch.return_value = True
                     task = self.manager.dequeue()
 
                 self.assertEqual(self.redis_client.lpop.call_count, 2)
                 self.assertEqual(task["kwargs"]["task_id"], "task-valid")
                 self.assertIs(task["func"], task_service.start)
                 if expected_task_id is None:
-                    state.patch_task.assert_not_called()
+                    state.recovery_patch.assert_not_called()
                 else:
                     self.assertEqual(
-                        state.patch_task.call_args.args[0], expected_task_id
+                        state.recovery_patch.call_args.args[0], expected_task_id
                     )
                     self.assertIn(
                         "positional arguments",
-                        state.patch_task.call_args.kwargs["error"],
+                        state.recovery_patch.call_args.kwargs["error"],
                     )
 
     def test_dequeue_dispatches_payload_without_args_field(self):

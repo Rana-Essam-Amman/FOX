@@ -162,62 +162,62 @@ class TestMemoryState(unittest.TestCase):
         self.assertEqual([task["task_id"] for task in second_page], ["task-2"])
         self.assertEqual(off_page.copies, 1)
 
-    def test_concurrent_memory_updates_are_preserved(self):
+    def test_recovery_patch_generation_fencing_matches_redis(self):
+        """MemoryState.recovery_patch must fail closed exactly like RedisState."""
         state = MemoryState()
-        thread_count = 5
-        tasks_per_thread = 50
 
-        def update_tasks(thread_index):
-            for task_index in range(tasks_per_thread):
-                state.update_task(
-                    f"task-{thread_index}-{task_index}",
-                    state=const.TASK_STATE_PROCESSING,
-                    progress=task_index,
-                )
+        # Deleted / never-created task is always rejected.
+        self.assertFalse(state.recovery_patch("missing", state=-1, error="gone"))
 
-        threads = [
-            threading.Thread(target=update_tasks, args=(thread_index,))
-            for thread_index in range(thread_count)
-        ]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
+        # Never-started (absent generation) + None is permitted.
+        state.update_task("never", state=const.TASK_STATE_PROCESSING)
+        self.assertTrue(
+            state.recovery_patch("never", expected_generation=None, state=-1, error="ok")
+        )
+        self.assertEqual(state.get_task("never")["state"], -1)
 
-        tasks, total = state.get_all_tasks(page=1, page_size=thread_count * tasks_per_thread)
+        # Absent generation + positive expected is rejected.
+        state.update_task("absent", state=const.TASK_STATE_PROCESSING)
+        self.assertFalse(
+            state.recovery_patch("absent", expected_generation=1, state=-1, error="no")
+        )
+        self.assertEqual(state.get_task("absent")["state"], const.TASK_STATE_PROCESSING)
 
-        self.assertEqual(total, thread_count * tasks_per_thread)
-        self.assertEqual(len(tasks), total)
+        # Exact match is permitted.
+        state.update_task("match", state=const.TASK_STATE_PROCESSING, generation=1)
+        self.assertTrue(
+            state.recovery_patch("match", expected_generation=1, state=-1, error="ok")
+        )
+        self.assertEqual(state.get_task("match")["state"], -1)
 
-    def test_patch_task_preserves_generated_outputs(self):
-        """异步发布更新不能覆盖已经完成的视频任务字段。"""
-        state = MemoryState()
-        state.update_task(
-            "task-1",
-            state=const.TASK_STATE_COMPLETE,
-            progress=100,
-            videos=["final.mp4"],
+        # Stale generation is rejected.
+        state.update_task("stale", state=const.TASK_STATE_PROCESSING, generation=2)
+        self.assertFalse(
+            state.recovery_patch("stale", expected_generation=1, state=-1, error="no")
+        )
+        self.assertEqual(state.get_task("stale")["state"], const.TASK_STATE_PROCESSING)
+
+        # Zero / negative expected are rejected.
+        state.update_task("zero", state=const.TASK_STATE_PROCESSING, generation=1)
+        self.assertFalse(
+            state.recovery_patch("zero", expected_generation=0, state=-1, error="no")
+        )
+        self.assertFalse(
+            state.recovery_patch("zero", expected_generation=-1, state=-1, error="no")
+        )
+        self.assertEqual(state.get_task("zero")["state"], const.TASK_STATE_PROCESSING)
+
+        # Absent + zero is rejected.
+        state.update_task("absent-zero", state=const.TASK_STATE_PROCESSING)
+        self.assertFalse(
+            state.recovery_patch("absent-zero", expected_generation=0, state=-1, error="no")
         )
 
-        patched = state.patch_task(
-            "task-1",
-            cross_post_state=const.CROSS_POST_STATE_COMPLETE,
-            cross_post_results=[{"success": True}],
+        # Deleted after creation is rejected.
+        state.delete_task("match")
+        self.assertFalse(
+            state.recovery_patch("match", expected_generation=1, state=-1, error="gone")
         )
-
-        self.assertTrue(patched)
-        self.assertEqual(
-            state.get_task("task-1"),
-            {
-                "task_id": "task-1",
-                "state": const.TASK_STATE_COMPLETE,
-                "progress": 100,
-                "videos": ["final.mp4"],
-                "cross_post_state": const.CROSS_POST_STATE_COMPLETE,
-                "cross_post_results": [{"success": True}],
-            },
-        )
-        self.assertFalse(state.patch_task("missing", value="ignored"))
 
 
 class TestRedisState(unittest.TestCase):

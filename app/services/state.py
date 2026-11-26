@@ -158,9 +158,12 @@ class MemoryState(BaseState):
     def recovery_patch(self, task_id: str, expected_generation: int | None = None, **kwargs) -> bool:
         """Narrow recovery update for queue dequeue failures.
 
-        Compatible with RedisState semantics for in-memory execution:
-        - If expected_generation is provided (>=1), succeed only if the stored
-          generation matches (or is absent for never-started tasks when None).
+        Semantics match RedisState / compare_and_write exactly:
+        - expected_generation must be None or a positive integer.
+        - If a positive integer, the stored generation must exist and match exactly.
+        - If None, recovery is allowed only when the task has no generation
+          (never-started).
+        - Zero, negative, or otherwise invalid generations fail closed.
         - Never recreates a deleted task.
         - Only allows state, failed_stage, error.
         """
@@ -174,13 +177,17 @@ class MemoryState(BaseState):
             if task is None:
                 return False
             stored_gen = task.get("generation")
-            if expected_generation is not None and expected_generation >= 1:
-                if stored_gen is not None and int(stored_gen) != expected_generation:
-                    return False
-            elif expected_generation is None:
-                # Only allow when never started (no generation).
+            if expected_generation is None:
+                # Never-started recovery only.
                 if stored_gen is not None:
                     return False
+            elif isinstance(expected_generation, int) and expected_generation >= 1:
+                # Exact match required; absent generation is rejected.
+                if stored_gen is None or int(stored_gen) != expected_generation:
+                    return False
+            else:
+                # Zero, negative, or non-integer: fail closed.
+                return False
             task.update(copy.deepcopy(kwargs))
             return True
 

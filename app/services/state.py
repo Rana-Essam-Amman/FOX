@@ -271,12 +271,12 @@ class RedisState(BaseState):
     def recovery_patch(self, task_id: str, expected_generation: int | None = None, **kwargs) -> bool:
         """Narrow recovery update for queue dequeue failures.
 
-        Requires an explicit expected_generation. The write is generation-fenced
-        via compare_and_write. If generation cannot be proven, the call returns
-        False and does not mutate state. Never recreates a deleted task.
+        If expected_generation is provided, the write is generation-fenced.
+        If expected_generation is None, the write is allowed only when the task
+        has no generation yet (never started). A task that already has a
+        generation is left untouched so a stale queue item cannot overwrite a
+        newer attempt. Never recreates a deleted task.
         """
-        if expected_generation is None or expected_generation < 1:
-            return False
         allowed = {"state", "failed_stage", "error"}
         if not set(kwargs.keys()).issubset(allowed):
             raise ValueError(f"recovery_patch only allows {allowed}")
@@ -284,8 +284,20 @@ class RedisState(BaseState):
             return False
         from app.services.fencing import compare_and_write
         try:
-            return bool(compare_and_write(
-                self._redis, task_id, expected_generation, kwargs
+            if expected_generation is not None and expected_generation >= 1:
+                return bool(compare_and_write(
+                    self._redis, task_id, expected_generation, kwargs
+                ))
+            # No generation proven. Only mark FAILED if the task has never
+            # acquired a generation (still the original admission).
+            raw = self._redis.hget(task_id, "generation")
+            if raw is not None:
+                # A generation exists; do not touch a newer attempt.
+                return False
+            # No generation: safe to mark the never-started task FAILED.
+            return bool(self._redis.eval(
+                _PATCH_EXISTING_TASK_SCRIPT, 1, task_id,
+                *sum(([k, self._serialize_field(k, v)] for k, v in kwargs.items()), []),
             ))
         except Exception:
             return False

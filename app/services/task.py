@@ -43,10 +43,12 @@ from app.services import (
 from app.services import upload_post
 from app.services import state as sm
 from app.services.state import current_generation
-from app.services.lease_guard import lease_lost_event, lease_lost as _lease_lost, check_lease_or_abort
-from app.services.terminal_guard import complete_if_owner as _complete_if_owner_impl, mark_failed_if_owner as _mark_failed_impl
+from app.services.lease_guard import lease_lost_event, check_lease_or_abort
+from app.services.terminal_guard import complete_if_owner as _complete_if_owner_impl
+from app.utils import file_security, utils
+from app.utils.subtitle_writer import staged_subtitle_file
 
-from app.services.fencing import acquire_generation, artifact_path_for_generation as _artifact_path_for_generation, publish_artifact_reference as _publish_artifact_reference, cleanup_generation_artifacts as _cleanup_generation_artifacts
+from app.services.fencing import acquire_generation, artifact_path_for_generation as _artifact_path_for_generation, cleanup_generation_artifacts as _cleanup_generation_artifacts
 
 def _complete_if_owner(task_id: str, **kwargs) -> bool:
     """Mark COMPLETE only if we still own the lease and generation.
@@ -56,8 +58,6 @@ def _complete_if_owner(task_id: str, **kwargs) -> bool:
     """
     return _complete_if_owner_impl(sm.state, task_id, **kwargs)
 
-from app.utils import file_security, utils
-from app.utils.subtitle_writer import staged_subtitle_file
 
 
 # 发布请求最长可等待数分钟，不能继续占用视频生成任务的并发名额。
@@ -292,7 +292,6 @@ def _mark_task_failed(
     so a newer generation is not overwritten.
     """
     from app.services.lease_guard import check_lease_or_abort
-    from app.services.state import current_generation
     if check_lease_or_abort(task_id, f"mark-failed:{stage}"):
         logger.error(f"lease lost; not marking {task_id} FAILED at {stage}")
         return {"task_id": task_id, "state": None, "lease_lost": True}
@@ -1157,7 +1156,6 @@ def generate_final_videos(
         _progress += 50 / params.video_count / 2
         sm.state.update_task(task_id, progress=_progress)
 
-        from app.services.state import current_generation
         gen = current_generation.get()
         final_video_path = _artifact_path_for_generation(task_id, f"final-{index}.mp4", gen)
 

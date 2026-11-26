@@ -1,3 +1,5 @@
+from typing import Any, Mapping
+import os
 """Redis fencing primitives for task ownership.
 
 Generations are stored in the task hash under the field "generation".
@@ -5,7 +7,6 @@ Acquisition atomically increments the generation. All subsequent mutations
 must supply the expected generation; Redis rejects stale writes atomically.
 """
 
-from typing import Any, Mapping
 
 # Lua: atomically acquire a new generation for a task hash.
 # Returns the new generation (integer) or nil if the key is not a hash.
@@ -122,8 +123,6 @@ return 1
 
 # Publication helpers used by task.py. Pure functions; no heavy imports.
 
-import os
-from pathlib import Path as _Path
 
 def artifact_path_for_generation(task_id: str, base_name: str, generation: int | None, task_dir: str | None = None) -> str:
     """Return an immutable generation-scoped artifact path under the real task storage.

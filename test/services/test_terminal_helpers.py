@@ -129,7 +129,7 @@ def test_mark_failed_stale_rejected(redis_client):
     g1 = acquire_generation(client, task_id)
     _g2 = acquire_generation(client, task_id)
     # Newer sets a state
-    token2 = current_generation.set(g2)
+    token2 = current_generation.set(_g2)
     try:
         state.update_task(task_id, state=2, progress=40)
     finally:

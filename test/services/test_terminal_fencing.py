@@ -59,7 +59,7 @@ def test_lease_loss_blocks_failed(redis_client):
     _g2 = acquire_generation(client, task_id)
 
     # Newer generation sets a state
-    token2 = current_generation.set(g2)
+    token2 = current_generation.set(_g2)
     try:
         state.update_task(task_id, state=2, progress=40)
     finally:

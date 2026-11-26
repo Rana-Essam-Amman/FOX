@@ -87,7 +87,11 @@ class _FakeRedis:
             return 0
 
         target = self.data[key]
-        for index in range(0, len(arguments), 2):
+        # compare_and_write passes expected_generation first, then field/value pairs.
+        start = 1 if arguments else 0
+        for index in range(start, len(arguments), 2):
+            if index + 1 >= len(arguments):
+                break
             field = str(arguments[index]).encode("utf-8")
             value = str(arguments[index + 1]).encode("utf-8")
             target[field] = value
@@ -217,11 +221,27 @@ class TestMemoryState(unittest.TestCase):
 
 
 class TestRedisState(unittest.TestCase):
-    def test_update_task_writes_all_fields_in_one_redis_command(self):
+    def test_update_task_requires_generation_and_fails_closed(self):
+        """Worker update_task requires a valid generation; missing generation is fail-closed."""
         state = RedisState.__new__(RedisState)
         state._redis = Mock()
 
-        state.update_task(
+        result = state.update_task(
+            "task-1",
+            state=const.TASK_STATE_COMPLETE,
+            progress=120,
+            videos=["final.mp4"],
+        )
+        self.assertFalse(result)
+        state._redis.hset.assert_not_called()
+        state._redis.eval.assert_not_called()
+
+    def test_create_task_writes_all_fields_in_one_redis_command(self):
+        """Initial create_task still uses a single hset for the full mapping."""
+        state = RedisState.__new__(RedisState)
+        state._redis = Mock()
+
+        state.create_task(
             "task-1",
             state=const.TASK_STATE_COMPLETE,
             progress=120,
@@ -384,10 +404,13 @@ class TestRedisState(unittest.TestCase):
 
     def test_patch_task_updates_only_existing_redis_task(self):
         state = self._build_state([1])
+        # Simulate a started task with generation so the fenced patch succeeds.
+        state._redis.data[b"task:0"][b"generation"] = b"1"
 
         self.assertTrue(
             state.patch_task(
                 "task:0",
+                generation=1,
                 cross_post_state=const.CROSS_POST_STATE_FAILED,
                 cross_post_error="upload failed",
             )
@@ -397,6 +420,8 @@ class TestRedisState(unittest.TestCase):
         self.assertEqual(task["cross_post_state"], const.CROSS_POST_STATE_FAILED)
         self.assertEqual(task["cross_post_error"], "upload failed")
         self.assertFalse(state.patch_task("missing", value="ignored"))
+        # Missing generation is fail-closed.
+        self.assertFalse(state.patch_task("task:0", value="ignored"))
 
     @unittest.skipUnless(
         os.getenv("MPT_TEST_REDIS_HOST"),

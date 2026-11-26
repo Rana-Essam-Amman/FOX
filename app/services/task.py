@@ -46,6 +46,16 @@ from app.services.state import current_generation
 from app.services.lease_guard import lease_lost_event, lease_lost as _lease_lost, check_lease_or_abort
 
 from app.services.fencing import acquire_generation, artifact_path_for_generation as _artifact_path_for_generation, publish_artifact_reference as _publish_artifact_reference, cleanup_generation_artifacts as _cleanup_generation_artifacts
+
+def _complete_if_owner(task_id: str, **kwargs):
+    """Mark COMPLETE only if we still own the lease and generation."""
+    from app.services.lease_guard import check_lease_or_abort
+    if check_lease_or_abort(task_id, "complete"):
+        logger.error(f"lease lost; not marking {task_id} COMPLETE")
+        return False
+    sm.state.update_task(task_id, state=const.TASK_STATE_COMPLETE, progress=100, **kwargs)
+    return True
+
 from app.utils import file_security, utils
 from app.utils.subtitle_writer import staged_subtitle_file
 
@@ -276,7 +286,16 @@ def _mark_task_failed(
     error: str,
     details: dict | None = None,
 ) -> dict:
-    """记录结构化失败信息，并保留任务失败前已经到达的进度。"""
+    """记录结构化失败信息，并保留任务失败前已经到达的进度。
+
+    If the current worker has lost its lease, abort without writing FAILED
+    so a newer generation is not overwritten.
+    """
+    from app.services.lease_guard import check_lease_or_abort
+    from app.services.state import current_generation
+    if check_lease_or_abort(task_id, f"mark-failed:{stage}"):
+        logger.error(f"lease lost; not marking {task_id} FAILED at {stage}")
+        return {"task_id": task_id, "state": None, "lease_lost": True}
     existing_task = None
     try:
         existing_task = sm.state.get_task(task_id)
@@ -1812,9 +1831,8 @@ def _run_pipeline(
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=10)
 
     if stop_at == "script":
-        sm.state.update_task(
-            task_id, state=const.TASK_STATE_COMPLETE, progress=100, script=video_script
-        )
+        if not _complete_if_owner(task_id, script=video_script):
+            return None
         return {"script": video_script}
 
     generation_progress.stage("terms")
@@ -1832,9 +1850,8 @@ def _run_pipeline(
     save_script_data(task_id, video_script, video_terms, params)
 
     if stop_at == "terms":
-        sm.state.update_task(
-            task_id, state=const.TASK_STATE_COMPLETE, progress=100, terms=video_terms
-        )
+        if not _complete_if_owner(task_id, terms=video_terms):
+            return None
         return {"script": video_script, "terms": video_terms}
 
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=20)
@@ -2022,9 +2039,8 @@ def _run_pipeline(
         "cross_post_owner": _cross_post_process_owner if should_cross_post else None,
         "warnings": generation_warnings or None,
     }
-    sm.state.update_task(
-        task_id, state=const.TASK_STATE_COMPLETE, progress=100, **kwargs
-    )
+    if not _complete_if_owner(task_id, **kwargs):
+        return None
 
     if should_cross_post:
         scheduling_error = _schedule_cross_post(
@@ -2122,6 +2138,10 @@ def start(
                 logger.exception(
                     f"unexpected task pipeline failure, task_id: {task_id}, error: {exc}"
                 )
+                from app.services.lease_guard import check_lease_or_abort
+                if check_lease_or_abort(task_id, "start-exception"):
+                    logger.error(f"lease lost; not marking {task_id} FAILED after exception")
+                    return None
                 return _mark_task_failed(
                     task_id,
                     "pipeline",

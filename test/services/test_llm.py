@@ -2812,9 +2812,10 @@ class TestSocialMetadata(unittest.TestCase):
         self.assertNotIn("y" * (llm.MAX_SOCIAL_SCRIPT_LENGTH + 1), prompt)
 
     def test_social_metadata_endpoint_response_shape(self):
-        from fastapi.testclient import TestClient
-
         from app.asgi import app
+        from test.services._oidc_test_authority import authed_client, install_oidc_for
+
+        install_oidc_for(self)
 
         request_body = {
             "video_subject": "Tokyo coffee shops",
@@ -2829,7 +2830,7 @@ class TestSocialMetadata(unittest.TestCase):
         )
 
         with patch.object(llm, "_generate_response", return_value=llm_response):
-            response = TestClient(app).post(
+            response = authed_client(app).post(
                 "/api/v1/social-metadata",
                 json=request_body,
             )

@@ -3,9 +3,9 @@
 import unittest
 from unittest.mock import patch
 
-from fastapi.testclient import TestClient
 
 from app import asgi
+from test.services._oidc_test_authority import authed_client, install_oidc_for
 from app.config import config
 from app.controllers.manager.memory_manager import InMemoryTaskManager
 from app.controllers.v1 import video as video_controller
@@ -13,6 +13,9 @@ from app.services import state as sm
 
 
 class TestVideoTermItems(unittest.TestCase):
+    def setUp(self):
+        install_oidc_for(self)
+
     def test_non_string_keywords_are_rejected_before_task_creation(self):
         for terms in ([123], [None], [False], [{"term": "coffee"}], [["coffee"]]):
             with self.subTest(terms=terms):
@@ -22,7 +25,7 @@ class TestVideoTermItems(unittest.TestCase):
                     patch.dict(config.app, {"api_key": ""}),
                     patch.object(sm, "state", state),
                     patch.object(video_controller, "task_manager", manager),
-                    TestClient(asgi.app) as client,
+                    authed_client(asgi.app) as client,
                 ):
                     response = client.post("/api/v1/videos", json={
                         "video_subject": "Coffee", "video_terms": terms,
@@ -40,7 +43,7 @@ class TestVideoTermItems(unittest.TestCase):
                     patch.dict(config.app, {"api_key": ""}),
                     patch.object(sm, "state", sm.MemoryState()),
                     patch.object(video_controller, "task_manager", manager),
-                    TestClient(asgi.app) as client,
+                    authed_client(asgi.app) as client,
                 ):
                     response = client.post("/api/v1/videos", json={
                         "video_subject": "Coffee", "video_terms": terms,

@@ -9,9 +9,9 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import redis
-from fastapi.testclient import TestClient
 
 from app import asgi
+from test.services._oidc_test_authority import authed_client, install_oidc_for
 from app.config import config
 from app.controllers.manager.base_manager import TaskQueueFullError
 from app.controllers.manager.redis_manager import RedisTaskManager
@@ -602,7 +602,8 @@ class TestVideoControllerCreateHTTP(unittest.TestCase):
     def setUp(self):
         self.original_app_config = dict(config.app)
         config.app["api_key"] = ""
-        self.client = TestClient(asgi.app)
+        install_oidc_for(self)
+        self.client = authed_client(asgi.app)
 
     def tearDown(self):
         config.app.clear()
@@ -620,6 +621,9 @@ class TestVideoControllerCreateHTTP(unittest.TestCase):
 
 
 class TestVideoControllerListHTTP(unittest.TestCase):
+    def setUp(self):
+        install_oidc_for(self)
+
     def test_task_page_size_is_bounded_before_state_scan(self):
         """A client cannot request an unbounded Redis scan and response body."""
         with (
@@ -630,7 +634,7 @@ class TestVideoControllerListHTTP(unittest.TestCase):
                 return_value=([], 0),
             ) as get_all,
         ):
-            client = TestClient(asgi.app)
+            client = authed_client(asgi.app)
             allowed = client.get("/api/v1/tasks?page_size=1000")
             rejected = client.get("/api/v1/tasks?page_size=1001")
 
@@ -646,7 +650,8 @@ class TestVideoControllerDeleteHTTP(unittest.TestCase):
         self.original_app_config = dict(config.app)
         # 这些用例只验证任务删除协议；鉴权行为由独立测试覆盖。
         config.app["api_key"] = ""
-        self.client = TestClient(asgi.app)
+        install_oidc_for(self)
+        self.client = authed_client(asgi.app)
 
     def tearDown(self):
         config.app.clear()

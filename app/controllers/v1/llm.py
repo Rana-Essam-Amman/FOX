@@ -2,6 +2,7 @@ from fastapi import Depends, Request
 
 from app.controllers import base
 from app.controllers.v1.base import new_router
+from app.controllers.base import verify_token
 from app.models.exception import HttpException
 from app.models.schema import (
     VideoScriptRequest,
@@ -17,7 +18,7 @@ from app.security import require_authenticated_user
 from app.security.rate_limit import rate_limiter
 
 # LLM endpoints use the same JWT authentication as the video routes.
-router = new_router(dependencies=[Depends(require_authenticated_user)])
+router = new_router(dependencies=[Depends(require_authenticated_user), Depends(verify_token)])
 
 
 @router.post(

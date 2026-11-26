@@ -6,9 +6,9 @@ from uuid import uuid4
 from unittest.mock import patch
 
 import redis
-from fastapi.testclient import TestClient
 
 from app import asgi
+from test.services._oidc_test_authority import authed_client
 from app.config import config
 from app.controllers.manager.redis_manager import RedisTaskManager
 from app.controllers.v1 import video as video_controller
@@ -37,7 +37,7 @@ class TestRedisShortFormRequests(unittest.TestCase):
                 patch.object(video_controller, "task_manager", self.manager),
                 patch.object(sm, "state", sm.MemoryState()),
                 patch.dict(config.app, {"api_key": ""}),
-                TestClient(asgi.app, raise_server_exceptions=False) as client,
+                authed_client(asgi.app, raise_server_exceptions=False) as client,
             ):
                 response = client.post(
                     f"/api/v1/{route}",

@@ -10,12 +10,12 @@ from app.services.fencing import acquire_generation
 @pytest.fixture
 def redis_state():
     client = redis.Redis(host="localhost", port=6379, db=14, decode_responses=False)
-    client.flushdb()
+    # no flushdb
     state = RedisState(host="localhost", port=6379, db=14)
     # Force the internal client to the test DB
     state._redis = client
     yield state, client
-    client.flushdb()
+    # no flushdb
 
 
 def test_stale_generation_cannot_update_task(redis_state):

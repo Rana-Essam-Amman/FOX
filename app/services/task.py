@@ -43,7 +43,8 @@ from app.services import (
 from app.services import upload_post
 from app.services import state as sm
 from app.services.state import current_generation
-from app.services.fencing import acquire_generation
+lease_lost_event: contextvars.ContextVar = contextvars.ContextVar("lease_lost_event", default=None)
+from app.services.fencing import acquire_generation, artifact_path_for_generation as _artifact_path_for_generation, publish_artifact_reference as _publish_artifact_reference, cleanup_generation_artifacts as _cleanup_generation_artifacts
 from app.utils import file_security, utils
 from app.utils.subtitle_writer import staged_subtitle_file
 
@@ -110,52 +111,6 @@ _SUPPORTED_VIDEO_SOURCES = frozenset({
     "jalapeno",
 })
 
-
-
-def _generation_scoped_output(task_id: str, final_name: str) -> tuple[str, str]:
-    """Return (temp_path, final_path) for generation-scoped output.
-
-    temp_path is unique to this generation so a stale worker cannot overwrite
-    a newer worker's published file. Promotion must verify ownership first.
-    """
-    from app.services.state import current_generation
-    gen = current_generation.get()
-    task_dir = utils.task_dir(task_id)
-    final_path = path.join(task_dir, final_name)
-    if gen is not None and gen >= 1:
-        temp_name = f"{final_name}.gen{gen}.tmp"
-        temp_path = path.join(task_dir, temp_name)
-    else:
-        temp_path = final_path
-    return temp_path, final_path
-
-
-def _promote_output_if_owner(task_id: str, temp_path: str, final_path: str) -> bool:
-    """Atomically promote temp to final only if this worker still owns the generation.
-
-    Returns True if promoted (or already final). Returns False if ownership lost;
-    in that case the temp file is removed.
-    """
-    from app.services.state import current_generation
-    from app.services.fencing import get_generation
-    gen = current_generation.get()
-    if gen is None or not hasattr(sm.state, "_redis"):
-        # Memory or unfenced: treat as owned
-        if temp_path != final_path and path.exists(temp_path):
-            os.replace(temp_path, final_path)
-        return True
-    stored = get_generation(sm.state._redis, task_id)
-    if stored != gen:
-        # Lost ownership. Clean up only our temp.
-        if path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except OSError:
-                pass
-        return False
-    if temp_path != final_path:
-        os.replace(temp_path, final_path)
-    return True
 
 
 def _get_video_music_prompt(params: VideoParams) -> str:
@@ -1175,7 +1130,9 @@ def generate_final_videos(
         _progress += 50 / params.video_count / 2
         sm.state.update_task(task_id, progress=_progress)
 
-        temp_video_path, final_video_path = _generation_scoped_output(task_id, f"final-{index}.mp4")
+        from app.services.state import current_generation
+        gen = current_generation.get()
+        final_video_path = _artifact_path_for_generation(task_id, f"final-{index}.mp4", gen)
 
         # 视频配乐模式先明确禁用默认 BGM 解析，避免旧任务残留的 bgm_file 被
         # 误用。只有音量大于 0 才生成代理并调用付费 API；0 音量统一跳过。
@@ -1211,7 +1168,7 @@ def generate_final_videos(
             video_path=combined_video_path,
             audio_path=audio_file,
             subtitle_path=subtitle_path,
-            output_file=temp_video_path,
+            output_file=final_video_path,
             params=params,
             bgm_file_override=bgm_file_override,
         )
@@ -1230,8 +1187,11 @@ def generate_final_videos(
                 }
             )
 
-        if not _promote_output_if_owner(task_id, temp_video_path, final_video_path):
-            logger.error(f"lost generation ownership before promoting output for {task_id}; discarding")
+        # Publish authoritative reference only if we still own the generation.
+        # The file itself is already written to an immutable generation-scoped name.
+        if not _publish_artifact_reference(task_id, "videos", final_video_path, gen):
+            logger.error(f"lost generation ownership; not publishing {final_video_path}")
+            _cleanup_generation_artifacts(task_id, gen or 0)
             return [], [], warnings
         final_video_paths.append(final_video_path)
         combined_video_paths.append(combined_video_path)
@@ -2120,6 +2080,9 @@ def start(
     # Publish to heartbeat before pipeline work. Heartbeat waits on this.
     if _generation_handoff is not None:
         _generation_handoff.publish(generation)
+        lease_token = lease_lost_event.set(_generation_handoff.lease_lost)
+    else:
+        lease_token = None
     token = current_generation.set(generation)
     try:
         with generation_progress.task_scope(task_id):
@@ -2150,6 +2113,8 @@ def start(
                 )
     finally:
         current_generation.reset(token)
+        if lease_token is not None:
+            lease_lost_event.reset(lease_token)
 
 
 if __name__ == "__main__":

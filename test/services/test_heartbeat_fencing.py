@@ -10,9 +10,10 @@ from app.services.fencing import acquire_generation
 @pytest.fixture
 def redis_client():
     client = redis.Redis(host="localhost", port=6379, db=13, decode_responses=False)
-    client.flushdb()
+    prefix = "test-hb-"
     yield client
-    client.flushdb()
+    for key in client.keys(f"{prefix}*"):
+        client.delete(key)
 
 
 def test_stale_generation_cannot_renew_lease(redis_client):

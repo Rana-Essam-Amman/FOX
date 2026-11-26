@@ -117,3 +117,58 @@ end
 redis.call("ZADD", KEYS[1], "XX", ARGV[2], ARGV[1])
 return 1
 """
+
+
+
+# Publication helpers used by task.py. Pure functions; no heavy imports.
+
+import os
+from pathlib import Path as _Path
+
+def artifact_path_for_generation(task_id: str, base_name: str, generation: int | None, task_dir: str | None = None) -> str:
+    """Return an immutable generation-scoped artifact path."""
+    if task_dir is None:
+        task_dir = f"/tmp/fox-tasks/{task_id}"
+    if generation is not None and generation >= 1:
+        stem, ext = os.path.splitext(base_name)
+        gen_name = f"{stem}.gen{generation}{ext}"
+        return os.path.join(task_dir, gen_name)
+    return os.path.join(task_dir, base_name)
+
+
+def publish_artifact_reference(
+    redis_client,
+    task_id: str,
+    field: str,
+    artifact_path: str,
+    expected_generation: int | None,
+) -> bool:
+    """Atomically publish an artifact reference only if we still own the generation.
+
+    Fail closed on missing/invalid generation or Redis errors.
+    """
+    if expected_generation is None or expected_generation < 1:
+        return False
+    try:
+        success = compare_and_write(
+            redis_client,
+            task_id,
+            expected_generation,
+            {field: artifact_path},
+        )
+    except Exception:
+        return False
+    return bool(success)
+
+
+def cleanup_generation_artifacts(task_dir: str, generation: int) -> None:
+    """Remove only artifacts belonging to the given generation in task_dir."""
+    if not os.path.isdir(task_dir):
+        return
+    suffix = f".gen{generation}"
+    for name in os.listdir(task_dir):
+        if suffix in name:
+            try:
+                os.remove(os.path.join(task_dir, name))
+            except OSError:
+                pass

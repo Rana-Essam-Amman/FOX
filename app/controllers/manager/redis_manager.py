@@ -22,16 +22,18 @@ FUNC_MAP = {
 }
 
 class GenerationHandoff:
-    """Per-execution handoff for fencing generation.
+    """Per-execution handoff for fencing generation and lease-loss signaling.
 
     Created by the manager, filled by start() after acquisition.
-    Heartbeat waits on the event and never reads generation from Redis itself.
+    Heartbeat waits on the ready event and never reads generation from Redis.
+    lease_lost is set when renewal fails; worker checks it at publication boundaries.
     """
     def __init__(self, task_id: str):
         self.task_id = task_id
         self.generation: int | None = None
         self.ready = threading.Event()
         self.failed = False
+        self.lease_lost = threading.Event()
 
     def publish(self, generation: int) -> None:
         self.generation = generation
@@ -40,6 +42,9 @@ class GenerationHandoff:
     def fail(self) -> None:
         self.failed = True
         self.ready.set()
+
+    def signal_lease_lost(self) -> None:
+        self.lease_lost.set()
 
 _ADMIT_QUEUED_TASK_SCRIPT = """
 if redis.call("LLEN", KEYS[1]) >= tonumber(ARGV[1]) then
@@ -327,11 +332,14 @@ class RedisTaskManager(TaskManager):
                 )
                 if not renewed:
                     logger.error(f"lost Redis running slot lease: {token} (task={handoff.task_id}, gen={handoff.generation})")
+                    handoff.signal_lease_lost()
                     return
             except redis.RedisError as exc:
-                # A temporary Redis outage must not kill the user task. The
-                # next heartbeat can still renew before the lease expires.
+                # Conservative: if we cannot confirm lease validity before the
+                # deadline, signal loss so the worker stops irreversible work.
                 logger.error(f"failed to renew Redis running slot {token}: {exc}")
+                handoff.signal_lease_lost()
+                return
 
     def _release_slot(self, token: str):
         try:

@@ -9,9 +9,9 @@ from app.services.fencing import acquire_generation, compare_and_write, get_gene
 @pytest.fixture
 def redis_client():
     client = redis.Redis(host="localhost", port=6379, db=15, decode_responses=False)
-    client.flushdb()
+    # no flushdb
     yield client
-    client.flushdb()
+    # no flushdb
 
 
 def test_acquire_generation_ordering(redis_client):

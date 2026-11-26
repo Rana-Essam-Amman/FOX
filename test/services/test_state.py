@@ -245,6 +245,51 @@ class TestMemoryState(unittest.TestCase):
         )
         self.assertEqual(state.get_task("bool")["state"], const.TASK_STATE_PROCESSING)
 
+        # Stored boolean generations are rejected (True is not generation 1).
+        state.update_task("stored-true", state=const.TASK_STATE_PROCESSING, generation=True)
+        self.assertFalse(
+            state.recovery_patch("stored-true", expected_generation=1, state=-1, error="no")
+        )
+        self.assertEqual(state.get_task("stored-true")["state"], const.TASK_STATE_PROCESSING)
+        state.update_task("stored-false", state=const.TASK_STATE_PROCESSING, generation=False)
+        self.assertFalse(
+            state.recovery_patch("stored-false", expected_generation=1, state=-1, error="no")
+        )
+        self.assertEqual(state.get_task("stored-false")["state"], const.TASK_STATE_PROCESSING)
+
+        # Fractional stored generation is rejected (no truncation).
+        state.update_task("frac", state=const.TASK_STATE_PROCESSING, generation=1.5)
+        self.assertFalse(
+            state.recovery_patch("frac", expected_generation=1, state=-1, error="no")
+        )
+        self.assertEqual(state.get_task("frac")["state"], const.TASK_STATE_PROCESSING)
+
+        # Exact integer-valued float is accepted for Redis tonumber parity.
+        state.update_task("float-int", state=const.TASK_STATE_PROCESSING, generation=1.0)
+        self.assertTrue(
+            state.recovery_patch("float-int", expected_generation=1, state=-1, error="ok")
+        )
+        self.assertEqual(state.get_task("float-int")["state"], -1)
+
+        # Pure integer string is accepted.
+        state.update_task("str-int", state=const.TASK_STATE_PROCESSING, generation="1")
+        self.assertTrue(
+            state.recovery_patch("str-int", expected_generation=1, state=-1, error="ok")
+        )
+        self.assertEqual(state.get_task("str-int")["state"], -1)
+
+        # Malformed strings and unsupported objects are rejected.
+        state.update_task("bad-str", state=const.TASK_STATE_PROCESSING, generation="1.5")
+        self.assertFalse(
+            state.recovery_patch("bad-str", expected_generation=1, state=-1, error="no")
+        )
+        self.assertEqual(state.get_task("bad-str")["state"], const.TASK_STATE_PROCESSING)
+        state.update_task("obj", state=const.TASK_STATE_PROCESSING, generation=object())
+        self.assertFalse(
+            state.recovery_patch("obj", expected_generation=1, state=-1, error="no")
+        )
+        self.assertEqual(state.get_task("obj")["state"], const.TASK_STATE_PROCESSING)
+
     def test_concurrent_memory_updates_are_preserved(self):
         state = MemoryState()
         thread_count = 5

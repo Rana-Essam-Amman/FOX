@@ -187,9 +187,30 @@ class MemoryState(BaseState):
                 # Booleans (True/False), non-integers, zero, negative: fail closed.
                 return False
             else:
-                # Exact match required; absent or malformed generation is rejected.
+                # Exact match required. Reject booleans, fractions, and malformed
+                # values without lossy int() truncation. Redis uses tonumber +
+                # numeric equality; we require a true integer representation.
+                if stored_gen is None or isinstance(stored_gen, bool):
+                    return False
                 try:
-                    if stored_gen is None or int(stored_gen) != expected_generation:
+                    if isinstance(stored_gen, str):
+                        # Accept only pure integer strings (no fractional part).
+                        if not stored_gen.lstrip("-").isdigit():
+                            return False
+                        stored_as_int = int(stored_gen)
+                    elif isinstance(stored_gen, int):
+                        stored_as_int = stored_gen
+                    elif isinstance(stored_gen, float):
+                        # Reject non-integral floats (1.5); accept only exact
+                        # integer-valued floats if we choose Redis parity.
+                        # Redis tonumber("1.0") == 1, so we accept only when
+                        # the float is exactly integral.
+                        if not stored_gen.is_integer():
+                            return False
+                        stored_as_int = int(stored_gen)
+                    else:
+                        return False
+                    if stored_as_int != expected_generation:
                         return False
                 except (TypeError, ValueError):
                     return False

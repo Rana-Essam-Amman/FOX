@@ -212,6 +212,10 @@ class TestVideoControllerTasks(unittest.TestCase):
     def _request():
         return SimpleNamespace(headers={"x-task-id": "request-123"}, method="GET")
 
+    def _authed_user(self):
+        from app.security.jwt_auth import AuthenticatedUser
+        return AuthenticatedUser(sub="test-user")
+
     def test_video_task_rejects_font_outside_font_directory_before_queueing(self):
         """非法字体路径必须在任务入队前返回 403，不产生付费后台任务。"""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -294,8 +298,9 @@ class TestVideoControllerTasks(unittest.TestCase):
 
         with (
             patch.object(video_controller.utils, "get_uuid", return_value="task-123"),
-            patch.object(video_controller.sm.state, "update_task") as update_task,
+            patch.object(video_controller.sm.state, "create_task") as create_task,
             patch.object(video_controller.task_manager, "add_task") as add_task,
+            patch("app.controllers.v1.video.require_authenticated_user", return_value=self._authed_user()),
         ):
             response = video_controller.create_task(
                 self._request(), body, stop_at="audio"
@@ -304,7 +309,7 @@ class TestVideoControllerTasks(unittest.TestCase):
         self.assertEqual(response["status"], 200)
         self.assertEqual(response["data"]["task_id"], "task-123")
         self.assertEqual(response["data"]["request_id"], "request-123")
-        update_task.assert_called_once_with("task-123")
+        create_task.assert_called_once_with("task-123")
         add_task.assert_called_once_with(
             video_controller.tm.start,
             task_id="task-123",

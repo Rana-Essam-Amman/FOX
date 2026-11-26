@@ -151,6 +151,10 @@ class MemoryState(BaseState):
             task.update(copy.deepcopy(kwargs))
             return True
 
+    def create_task(self, task_id: str, state: int = const.TASK_STATE_PROCESSING, progress: int = 0, **kwargs) -> bool:
+        """Initial creation for in-memory execution. Always succeeds if called."""
+        return self.update_task(task_id, state=state, progress=progress, **kwargs)
+
     def recovery_patch(self, task_id: str, expected_generation: int | None = None, **kwargs) -> bool:
         """Narrow recovery update for queue dequeue failures.
 

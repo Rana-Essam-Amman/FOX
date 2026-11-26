@@ -4,12 +4,19 @@ import pytest
 import redis
 
 import importlib.util
-ns = importlib.util.spec_from_file_location('ns', 'app/security/owner_namespaces.py')
-m = importlib.util.module_from_spec(ns); ns.loader.exec_module(m)
-user_owner_id, OwnerNamespaceError, POLICY_USER = m.user_owner_id, m.OwnerNamespaceError, m.POLICY_USER
-te = importlib.util.spec_from_file_location('te', 'app/security/task_execution.py')
-te_m = importlib.util.module_from_spec(te); te.loader.exec_module(te_m)
-authorize_task_execution, ExecutionDenied = te_m.authorize_task_execution, te_m.ExecutionDenied
+import sys
+
+def _load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+ns = _load('app.security.owner_namespaces', 'app/security/owner_namespaces.py')
+user_owner_id, OwnerNamespaceError, POLICY_USER = ns.user_owner_id, ns.OwnerNamespaceError, ns.POLICY_USER
+te = _load('app.security.task_execution', 'app/security/task_execution.py')
+authorize_task_execution, ExecutionDenied = te.authorize_task_execution, te.ExecutionDenied
 from app.services.fencing import acquire_generation
 from app.services.state import RedisState
 

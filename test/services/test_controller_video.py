@@ -216,6 +216,17 @@ class TestVideoControllerTasks(unittest.TestCase):
         from app.security.jwt_auth import AuthenticatedUser
         return AuthenticatedUser(sub="test-user")
 
+    def _ownership_store_for(self, *task_ids):
+        from app.security.ownership import InMemoryOwnershipStore, TaskOwnershipRecord
+        from datetime import datetime, timezone
+        store = InMemoryOwnershipStore()
+        for task_id in task_ids:
+            store.create(TaskOwnershipRecord(
+                task_id=task_id, owner_id="test-user",
+                created_at=datetime.now(timezone.utc), kind="video", metadata={},
+            ))
+        return store
+
     def test_video_task_rejects_font_outside_font_directory_before_queueing(self):
         """非法字体路径必须在任务入队前返回 403，不产生付费后台任务。"""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -362,25 +373,26 @@ class TestVideoControllerTasks(unittest.TestCase):
 
     def test_get_all_tasks_preserves_pagination(self):
         """任务列表响应必须包含状态层返回的总数和请求分页参数。"""
+        store = self._ownership_store_for("task-1")
         with patch.object(
             video_controller.sm.state,
             "get_all_tasks",
-            return_value=([{"id": "task-1", "cross_post_owner": "internal"}], 21),
-        ) as get_all:
+            return_value=([{"task_id": "task-1", "cross_post_owner": "internal"}], 21),
+        ) as get_all, patch.object(video_controller, "ownership_store", store):
             response = video_controller.get_all_tasks(
-                self._request(), page=2, page_size=10
+                self._request(), page=1, page_size=10, user=self._authed_user()
             )
 
         self.assertEqual(
             response["data"],
             {
-                "tasks": [{"id": "task-1"}],
-                "total": 21,
-                "page": 2,
+                "tasks": [{"task_id": "task-1"}],
+                "total": 1,
+                "page": 1,
                 "page_size": 10,
             },
         )
-        get_all.assert_called_once_with(2, 10)
+        get_all.assert_called_once_with(1, 10000)
 
     def test_task_list_returns_download_urls_without_mutating_state(self):
         """List and detail endpoints must expose the same usable video URLs."""

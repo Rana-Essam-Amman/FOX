@@ -90,10 +90,11 @@ def test_recovery_requires_generation(redis_client):
     state = RedisState(host="localhost", port=6379, db=5)
     state._redis = client
     state.create_task(task_id)
-    # No generation: fail closed
+    # Once a worker has started, recovery must carry its exact generation.
+    g = acquire_generation(client, task_id)
+    # No generation: fail closed for an already-started task.
     assert state.recovery_patch(task_id, state=-1, error="stale") is False
     # With wrong generation: fail closed
-    g = acquire_generation(client, task_id)
     assert state.recovery_patch(task_id, expected_generation=g + 99, state=-1) is False
     # With correct generation: succeeds
     assert state.recovery_patch(task_id, expected_generation=g, state=-1, error="real") is True

@@ -541,7 +541,7 @@ class TestRedisState(unittest.TestCase):
 
         try:
             for task_id in task_ids:
-                state.update_task(
+                state.create_task(
                     task_id,
                     state=const.TASK_STATE_COMPLETE,
                     progress=100,
@@ -570,7 +570,7 @@ class TestRedisState(unittest.TestCase):
         task_ids = [f"ci-page-{uuid.uuid4()}-{index}" for index in range(13)]
         try:
             for task_id in reversed(task_ids):
-                state.update_task(task_id, state=const.TASK_STATE_COMPLETE)
+                state.create_task(task_id, state=const.TASK_STATE_COMPLETE)
 
             all_tasks = []
             page = 1
@@ -623,23 +623,25 @@ class TestRedisState(unittest.TestCase):
 
         for _ in range(50):
             task_id = f"ci-atomic-{uuid.uuid4()}"
-            state.update_task(
+            state.create_task(
                 task_id,
                 state=const.TASK_STATE_COMPLETE,
                 progress=100,
             )
+            generation = state.acquire_generation(task_id)
             barrier = threading.Barrier(2)
 
             def patch_task():
                 barrier.wait()
                 state.patch_task(
                     task_id,
+                    generation=generation,
                     cross_post_state=const.CROSS_POST_STATE_COMPLETE,
                 )
 
             def delete_task():
                 barrier.wait()
-                state.delete_task(task_id)
+                state.delete_task(task_id, generation=generation)
 
             # Future.result() 会把工作线程异常重新抛到测试线程，避免 Redis
             # 命令实际失败但仅打印线程异常、最终仍被误判为测试通过。

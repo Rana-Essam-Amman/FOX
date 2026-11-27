@@ -1238,11 +1238,13 @@ def generate_final_videos(
     return final_video_paths, combined_video_paths, warnings
 
 
-def _patch_cross_post_state(task_id: str, **kwargs) -> bool | None:
-    """安全更新发布字段；短暂状态后端故障时有限重试。"""
+def _patch_cross_post_state(
+    task_id: str, *, generation: int | None = None, **kwargs
+) -> bool | None:
+    """安全更新发布字段；每次写入都绑定任务代次。"""
     for attempt in range(1, _CROSS_POST_STATE_WRITE_ATTEMPTS + 1):
         try:
-            return sm.state.patch_task(task_id, **kwargs)
+            return sm.state.patch_task(task_id, generation=generation, **kwargs)
         except Exception as exc:
             # Redis 短暂断连不应让任务永久停留在 pending/processing。发布状态
             # 写入频率很低，这里使用固定次数和短等待即可覆盖瞬时故障，同时
@@ -1268,10 +1270,13 @@ def _record_cross_post_failure(
     task_id: str,
     error: Exception,
     results: list[dict] | None = None,
+    *,
+    generation: int | None = None,
 ) -> None:
     """尽最大努力保存发布失败；状态后端不可用时由日志保留诊断信息。"""
     updated = _patch_cross_post_state(
         task_id,
+        generation=generation,
         cross_post_state=const.CROSS_POST_STATE_FAILED,
         cross_post_results=results or None,
         cross_post_error=str(error),
@@ -1281,7 +1286,9 @@ def _record_cross_post_failure(
         logger.warning(f"discard cross-post failure for missing task: {task_id}")
 
 
-def _ensure_cross_post_terminal_state(task_id: str) -> None:
+def _ensure_cross_post_terminal_state(
+    task_id: str, generation: int | None = None
+) -> None:
     """Future 结束后把仍处于活动态的任务收敛为失败。"""
     try:
         task = sm.state.get_task(task_id)
@@ -1304,6 +1311,7 @@ def _ensure_cross_post_terminal_state(task_id: str) -> None:
         task_id,
         RuntimeError("cross-post worker ended without persisting a terminal state"),
         task.get("cross_post_results"),
+        generation=generation,
     )
 
 
@@ -1332,8 +1340,19 @@ def recover_interrupted_cross_posts(page_size: int = 100) -> int | None:
             ):
                 continue
 
+            task_generation = task.get("generation")
+            if (
+                isinstance(task_generation, bool)
+                or not isinstance(task_generation, int)
+                or task_generation < 1
+            ):
+                logger.warning(
+                    f"skip recovery for task without valid generation: {task_id}"
+                )
+                continue
             updated = _patch_cross_post_state(
                 task_id,
+                generation=task_generation,
                 cross_post_state=const.CROSS_POST_STATE_FAILED,
                 cross_post_error=_INTERRUPTED_CROSS_POST_ERROR,
                 cross_post_owner=None,
@@ -1521,7 +1540,9 @@ def _run_cross_post_with_slot(*args) -> None:
         _cross_post_slots.release()
 
 
-def _finalize_cross_post_future(task_id: str, future: Future) -> None:
+def _finalize_cross_post_future(
+    task_id: str, future: Future, generation: int | None = None
+) -> None:
     """清理 Future 注册，并确保取消、异常和状态写入失败都能收敛。"""
     _unregister_cross_post_future(task_id, future)
 
@@ -1535,13 +1556,14 @@ def _finalize_cross_post_future(task_id: str, future: Future) -> None:
         _record_cross_post_failure(
             task_id,
             RuntimeError("cross-post job was cancelled before execution"),
+            generation=generation,
         )
         return
     except Exception as exc:
         logger.exception(
             f"failed to inspect cross-post future, task_id: {task_id}, error: {exc}"
         )
-        _ensure_cross_post_terminal_state(task_id)
+        _ensure_cross_post_terminal_state(task_id, generation=generation)
         return
 
     if error is not None:
@@ -1550,7 +1572,7 @@ def _finalize_cross_post_future(task_id: str, future: Future) -> None:
             f"error: {type(error).__name__}: {error}"
         )
 
-    _ensure_cross_post_terminal_state(task_id)
+    _ensure_cross_post_terminal_state(task_id, generation=generation)
 
 
 def _schedule_cross_post(
@@ -1594,7 +1616,10 @@ def _schedule_cross_post(
             upload_post.upload_post_service.snapshot_account(),
         )
         _register_cross_post_future(task_id, future)
-        future.add_done_callback(partial(_finalize_cross_post_future, task_id))
+        generation = current_generation.get()
+        future.add_done_callback(
+            partial(_finalize_cross_post_future, task_id, generation=generation)
+        )
     except RuntimeError as exc:
         _unregister_cross_post_future(task_id)
         _cross_post_slots.release()
@@ -2111,7 +2136,7 @@ def start(
         lease_token = None
     token = current_generation.set(generation)
     try:
-        with generation_progress.task_scope(task_id):
+        with generation_progress.task_scope(task_id, generation=generation):
             try:
                 return _run_pipeline(
                     task_id,

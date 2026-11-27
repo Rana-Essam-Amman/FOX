@@ -857,6 +857,28 @@ class TestTaskService(unittest.TestCase):
         self.assertNotEqual(task["state"], tm.const.TASK_STATE_FAILED)
         self.assertNotIn("error", task)
 
+    def test_stale_worker_cannot_complete_new_generation(self):
+        """Terminal completion must use the caller's generation token."""
+        state = MemoryState()
+        state.create_task("stale-completion-writer")
+        self.assertEqual(state.acquire_generation("stale-completion-writer"), 1)
+
+        token = tm.current_generation.set(1)
+        try:
+            self.assertEqual(state.acquire_generation("stale-completion-writer"), 2)
+            with patch.object(tm.sm, "state", state):
+                completed = tm._complete_if_owner(
+                    "stale-completion-writer", videos=["stale.mp4"]
+                )
+        finally:
+            tm.current_generation.reset(token)
+
+        self.assertFalse(completed)
+        task = state.get_task("stale-completion-writer")
+        self.assertEqual(task["generation"], 2)
+        self.assertNotEqual(task["state"], tm.const.TASK_STATE_COMPLETE)
+        self.assertNotIn("videos", task)
+
     def test_start_rejects_missing_elevenlabs_key_before_pipeline_steps(self):
         """完整任务缺少 ElevenLabs Key 时必须在任何付费步骤前失败。"""
         params = VideoParams(video_subject="test", bgm_type="elevenlabs")

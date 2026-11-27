@@ -11,7 +11,6 @@ from loguru import logger
 from app.services import state as sm
 
 
-
 _current = ContextVar("generation_progress", default=None)
 _SUCCESS = {"succeeded", "completed", "success", "successful"}
 _QUEUED = {"queued", "pending", "waiting", "created"}

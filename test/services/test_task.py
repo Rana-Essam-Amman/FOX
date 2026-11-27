@@ -833,6 +833,30 @@ class TestTaskService(unittest.TestCase):
         self.assertEqual(result["error"], "remote run timed out")
         self.assertEqual(result["loomloom_run_id"], "run-1")
 
+    def test_stale_worker_cannot_adopt_new_generation_when_marking_failure(self):
+        """A failure writer must use its own token, never the stored generation."""
+        state = MemoryState()
+        state.create_task("stale-failure-writer")
+        self.assertEqual(state.acquire_generation("stale-failure-writer"), 1)
+
+        token = tm.current_generation.set(1)
+        try:
+            self.assertEqual(state.acquire_generation("stale-failure-writer"), 2)
+            with patch.object(tm.sm, "state", state):
+                result = tm._mark_task_failed(
+                    "stale-failure-writer",
+                    "materials",
+                    "stale worker must not overwrite",
+                )
+        finally:
+            tm.current_generation.reset(token)
+
+        self.assertTrue(result.get("write_rejected"))
+        task = state.get_task("stale-failure-writer")
+        self.assertEqual(task["generation"], 2)
+        self.assertNotEqual(task["state"], tm.const.TASK_STATE_FAILED)
+        self.assertNotIn("error", task)
+
     def test_start_rejects_missing_elevenlabs_key_before_pipeline_steps(self):
         """完整任务缺少 ElevenLabs Key 时必须在任何付费步骤前失败。"""
         params = VideoParams(video_subject="test", bgm_type="elevenlabs")

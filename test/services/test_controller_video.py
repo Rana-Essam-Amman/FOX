@@ -332,6 +332,7 @@ class TestVideoControllerTasks(unittest.TestCase):
         """队列已满时必须回滚刚创建的状态，并向调用方返回 429。"""
         body = MagicMock()
         body.model_dump.return_value = {"video_subject": "Coffee"}
+        user = self._authed_user()
 
         with (
             patch.object(video_controller.utils, "get_uuid", return_value="task-123"),
@@ -341,7 +342,10 @@ class TestVideoControllerTasks(unittest.TestCase):
                 "add_task",
                 side_effect=TaskQueueFullError("queue full"),
             ),
-            patch.object(video_controller.sm.state, "delete_task") as delete_task,
+            patch.object(video_controller.sm.state, "authorized_delete", create=True) as delete_task,
+            patch("app.controllers.v1.video.require_authenticated_user", return_value=user),
+            patch("app.security.rate_limit.rate_limiter.check_request"),
+            patch("app.security.rate_limit.rate_limiter.check_generation"),
         ):
             with self.assertRaises(HttpException) as raised:
                 video_controller.create_task(self._request(), body, stop_at="video")

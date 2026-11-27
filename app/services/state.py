@@ -70,7 +70,14 @@ current_generation: ContextVar[int | None] = ContextVar("current_generation", de
 # Base class for state management
 class BaseState(ABC):
     @abstractmethod
-    def update_task(self, task_id: str, state: int, progress: int = 0, **kwargs):
+    def update_task(
+        self,
+        task_id: str,
+        state: int,
+        progress: int = 0,
+        generation: int | None = None,
+        **kwargs,
+    ):
         pass
 
     @abstractmethod
@@ -87,8 +94,10 @@ class BaseState(ABC):
         pass
 
     @abstractmethod
-    def patch_task(self, task_id: str, **kwargs) -> bool:
-        """只更新已有任务的指定字段；任务不存在时返回 False。"""
+    def patch_task(
+        self, task_id: str, generation: int | None = None, **kwargs
+    ) -> bool:
+        """Patch an existing task only while the caller owns its generation."""
         pass
 
     @abstractmethod

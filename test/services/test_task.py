@@ -1427,6 +1427,7 @@ class TestTaskService(unittest.TestCase):
         for stop_at, expected in expected_results.items():
             with self.subTest(stop_at=stop_at):
                 params = VideoParams(video_subject="Coffee")
+                tm.sm.state.create_task(f"intermediate-{stop_at}")
                 with (
                     patch.object(
                         tm, "generate_script", return_value="generated script"

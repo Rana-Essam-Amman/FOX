@@ -89,6 +89,23 @@ class BaseState(ABC):
         """只更新已有任务的指定字段；任务不存在时返回 False。"""
         pass
 
+    @abstractmethod
+    def acquire_generation(self, task_id: str) -> int | None:
+        """Atomically acquire the next worker generation for an existing task."""
+        pass
+
+    @abstractmethod
+    def publish_artifact_reference(
+        self, task_id: str, field: str, artifact_reference, expected_generation: int | None
+    ) -> bool:
+        """Publish an artifact reference only while the caller owns the generation."""
+        pass
+
+    @abstractmethod
+    def authorized_delete(self, task_id: str) -> bool:
+        """Delete a task after the route has verified the caller's ownership."""
+        pass
+
 
 # Memory state management
 class MemoryState(BaseState):
@@ -123,6 +140,12 @@ class MemoryState(BaseState):
             progress = 100
 
         with self._lock:
+            expected_generation = current_generation.get()
+            existing = self._tasks.get(task_id)
+            if expected_generation is not None and (
+                existing is None or existing.get("generation") != expected_generation
+            ):
+                return False
             self._tasks[task_id] = {
                 # Keep fields from earlier pipeline stages, matching Redis
                 # HSET updates. A progress-only update must not erase the
@@ -154,6 +177,47 @@ class MemoryState(BaseState):
     def create_task(self, task_id: str, state: int = const.TASK_STATE_PROCESSING, progress: int = 0, **kwargs) -> bool:
         """Initial creation for in-memory execution. Always succeeds if called."""
         return self.update_task(task_id, state=state, progress=progress, **kwargs)
+
+    def acquire_generation(self, task_id: str) -> int | None:
+        """Atomically increment the generation of an existing in-memory task."""
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                return None
+            stored = task.get("generation", 0)
+            if isinstance(stored, bool):
+                return None
+            if isinstance(stored, str):
+                if not stored.isdigit():
+                    return None
+                stored = int(stored)
+            if not isinstance(stored, int) or stored < 0:
+                return None
+            generation = stored + 1
+            task["generation"] = generation
+            return generation
+
+    def publish_artifact_reference(
+        self, task_id: str, field: str, artifact_reference, expected_generation: int | None
+    ) -> bool:
+        """Atomically publish only while the task still has this generation."""
+        if (
+            isinstance(expected_generation, bool)
+            or not isinstance(expected_generation, int)
+            or expected_generation < 1
+        ):
+            return False
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None or task.get("generation") != expected_generation:
+                return False
+            task[field] = copy.deepcopy(artifact_reference)
+            return True
+
+    def authorized_delete(self, task_id: str) -> bool:
+        """Delete only after the caller has completed route-level authorization."""
+        with self._lock:
+            return self._tasks.pop(task_id, None) is not None
 
     def recovery_patch(self, task_id: str, expected_generation: int | None = None, **kwargs) -> bool:
         """Narrow recovery update for queue dequeue failures.
@@ -238,6 +302,18 @@ class RedisState(BaseState):
         import redis
 
         self._redis = redis.StrictRedis(host=host, port=port, db=db, password=password)
+
+    def acquire_generation(self, task_id: str) -> int | None:
+        from app.services.fencing import acquire_generation
+        return acquire_generation(self._redis, task_id)
+
+    def publish_artifact_reference(
+        self, task_id: str, field: str, artifact_reference, expected_generation: int | None
+    ) -> bool:
+        from app.services.fencing import publish_artifact_reference
+        return publish_artifact_reference(
+            self._redis, task_id, field, artifact_reference, expected_generation
+        )
 
     def get_all_tasks(self, page: int, page_size: int):
         start = (page - 1) * page_size

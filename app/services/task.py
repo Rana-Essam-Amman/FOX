@@ -2172,10 +2172,18 @@ def start(
 
 
 if __name__ == "__main__":
-    task_id = "task_id"
+    task_id = str(uuid4())
     params = VideoParams(
         video_subject="金钱的作用",
         voice_name="zh-CN-XiaoyiNeural-Female",
         voice_rate=1.0,
     )
-    start(task_id, params, stop_at="video")
+    if sm.state.create_task(
+        task_id,
+        state=const.TASK_STATE_PROCESSING,
+        progress=0,
+        video_subject=params.video_subject,
+    ):
+        start(task_id, params, stop_at="video")
+    else:
+        raise RuntimeError(f"could not create task record: {task_id}")

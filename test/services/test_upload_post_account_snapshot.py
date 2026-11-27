@@ -5,6 +5,7 @@ import tempfile
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,6 +17,20 @@ from app.models.schema import VideoParams
 from app.services import state as sm
 from app.services import task as tm
 from app.services import upload_post
+
+
+@contextmanager
+def _worker_generation():
+    token = tm.current_generation.set(1)
+    try:
+        yield
+    finally:
+        tm.current_generation.reset(token)
+
+
+def _schedule_with_generation(*args):
+    with _worker_generation():
+        return tm._schedule_cross_post(*args)
 
 
 def _response(payload):
@@ -30,7 +45,7 @@ class TestUploadPostAccountSnapshot(unittest.TestCase):
         released = threading.Event()
         state = sm.MemoryState()
         task_id = "account-snapshot"
-        state.update_task(task_id, cross_post_state=const.CROSS_POST_STATE_PENDING)
+        state.create_task(task_id, generation=1, cross_post_state=const.CROSS_POST_STATE_PENDING)
         account_a = {
             "upload_post_enabled": True,
             "upload_post_api_key": "account-a-test-key",
@@ -51,7 +66,7 @@ class TestUploadPostAccountSnapshot(unittest.TestCase):
                             "success": True, "results": {"tiktok": {"success": True}}
                         })) as post,
                     ):
-                        error = tm._schedule_cross_post(
+                        error = _schedule_with_generation(
                             task_id, [str(video)], VideoParams(video_subject="Coffee"),
                             "Prepared script", ["tiktok"], "public",
                         )

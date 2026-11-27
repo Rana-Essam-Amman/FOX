@@ -11,17 +11,6 @@ from app.config import config
 from app.models import const
 
 
-_CREATE_TASK_SCRIPT = """
-if redis.call("EXISTS", KEYS[1]) ~= 0 then
-    return 0
-end
-for i = 1, #ARGV, 2 do
-    redis.call("HSET", KEYS[1], ARGV[i], ARGV[i + 1])
-end
-return 1
-"""
-
-
 _PATCH_EXISTING_TASK_SCRIPT = """
 -- Match discovery/get_task ownership checks inside the same atomic operation.
 -- Other services and our queue may share this database or reuse a deleted key.
@@ -441,16 +430,14 @@ class RedisState(BaseState):
             "progress": progress,
             **kwargs,
         }
-        mapping = {
-            field: self._serialize_field(field, value)
-            for field, value in fields.items()
-        }
-        args = []
-        for field, value in mapping.items():
-            args.extend((field, value))
-        return bool(self._redis.eval(
-            _CREATE_TASK_SCRIPT, 1, task_id, *args
-        ))
+        self._redis.hset(
+            task_id,
+            mapping={
+                field: self._serialize_field(field, value)
+                for field, value in fields.items()
+            },
+        )
+        return True
 
     def authorized_delete(self, task_id: str) -> bool:
         """Explicit deletion after route-level ownership authorization.

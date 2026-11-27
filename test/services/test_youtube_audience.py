@@ -29,7 +29,7 @@ def _worker_generation():
 
 def _schedule_with_generation(*args):
     with _worker_generation():
-        return _schedule_with_generation(*args)
+        return task._schedule_cross_post(*args)
 
 
 @pytest.fixture

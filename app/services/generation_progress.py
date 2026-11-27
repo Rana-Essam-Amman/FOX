@@ -20,8 +20,9 @@ _IDENTIFIER = re.compile(r"^[\w.:-]{1,200}$")
 
 
 class _Reporter:
-    def __init__(self, task_id):
+    def __init__(self, task_id, generation=None):
         self.task_id = task_id
+        self.generation = generation
         self.activity = {}
         self.lock = threading.RLock()
         self.last_log_at = 0
@@ -39,7 +40,11 @@ class _Reporter:
                 self.activity = {} if reset else dict(self.activity)
                 self.activity.setdefault("started_at", now)
                 self.activity.update(phase=phase, updated_at=now, **fields)
-                sm.state.patch_task(self.task_id, generation_activity=self.activity)
+                sm.state.patch_task(
+                    self.task_id,
+                    generation=self.generation,
+                    generation_activity=self.activity,
+                )
                 if previous != phase or now - self.last_log_at >= 30:
                     self.last_log_at = now
                     logger.info(
@@ -53,8 +58,8 @@ class _Reporter:
 
 
 @contextmanager
-def task_scope(task_id):
-    token = _current.set(_Reporter(task_id))
+def task_scope(task_id, generation=None):
+    token = _current.set(_Reporter(task_id, generation=generation))
     try:
         yield
     finally:

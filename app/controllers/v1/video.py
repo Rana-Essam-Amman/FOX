@@ -302,7 +302,11 @@ def create_task(
             "request_id": request_id,
             "params": body.model_dump(),
         }
-        sm.state.create_task(task_id)
+        if not sm.state.create_task(task_id):
+            raise HttpException(
+                status_code=409,
+                message="Task identifier collision; please retry the request",
+            )
         try:
             ownership_store.create(
                 TaskOwnershipRecord(

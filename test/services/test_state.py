@@ -440,21 +440,26 @@ class TestRedisState(unittest.TestCase):
         state._redis.hset.assert_not_called()
         state._redis.eval.assert_not_called()
 
-    def test_create_task_writes_all_fields_in_one_redis_command(self):
-        """Initial create_task still uses a single hset for the full mapping."""
+    def test_create_task_uses_atomic_create_script(self):
+        """Initial creation must not overwrite an existing Redis key."""
         state = RedisState.__new__(RedisState)
         state._redis = Mock()
+        state._redis.eval.return_value = 1
 
-        state.create_task(
+        self.assertTrue(state.create_task(
             "task-1",
             state=const.TASK_STATE_COMPLETE,
             progress=120,
             videos=["final.mp4"],
-        )
+        ))
 
-        state._redis.hset.assert_called_once_with(
-            "task-1",
-            mapping={
+        call = state._redis.eval.call_args
+        self.assertEqual(call.args[1:3], (1, "task-1"))
+        self.assertIn('EXISTS', call.args[0])
+        mapping = dict(zip(call.args[3::2], call.args[4::2]))
+        self.assertEqual(
+            mapping,
+            {
                 "task_id": "task-1",
                 "state": str(const.TASK_STATE_COMPLETE),
                 "progress": "100",

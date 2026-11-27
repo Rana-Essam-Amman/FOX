@@ -109,6 +109,7 @@ class TestMemoryState(unittest.TestCase):
         self.assertEqual(state.get_task("owned")["progress"], 10)
         self.assertFalse(state.update_task("owned", progress=50))
 
+        self.assertEqual(state.acquire_generation("owned"), 1)
         token = current_generation.set(1)
         try:
             self.assertTrue(state.update_task("owned", progress=50))

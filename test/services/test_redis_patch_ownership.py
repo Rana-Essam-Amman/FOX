@@ -22,10 +22,14 @@ def test_patch_does_not_mutate_non_task_redis_keys(redis_state, kind):
             client.rpush(key, "queued-task")
             before = client.lrange(key, 0, -1)
         else:
-            client.hset(key, mapping={"foreign_field": "untouched", **({"task_id": "another-task"} if kind == "mismatched_marker" else {})})
+            client.hset(key, mapping={
+                "foreign_field": "untouched",
+                "generation": "1",
+                **({"task_id": "another-task"} if kind == "mismatched_marker" else {}),
+            })
             before = client.hgetall(key)
         assert redis_state.get_task(key) is None
-        assert redis_state.patch_task(key, progress=50) is False
+        assert redis_state.patch_task(key, generation=1, progress=50) is False
         assert (client.lrange(key, 0, -1) if kind == "queue" else client.hgetall(key)) == before
     finally:
         client.delete(key)

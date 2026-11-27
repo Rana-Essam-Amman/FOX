@@ -90,5 +90,5 @@ def test_nullable_api_mode_reaches_native_renderer_and_completes(tmp_path):
         patch.object(video, "generate_video"),
     ):
         result = tm.start("task-null-mode", params)
-    assert result["videos"] == [str(tmp_path / "final-1.mp4")]
+    assert result["videos"] == [str(tmp_path / "final-1.gen1.mp4")]
     assert state.get_task("task-null-mode")["state"] == tm.const.TASK_STATE_COMPLETE

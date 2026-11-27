@@ -6,9 +6,9 @@ No Redis. No process-local fallback. Requires DATABASE_URL.
 
 from __future__ import annotations
 
-import os
-from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
+import os
 
 from app.models.exception import HttpException
 from app.security.jwt_auth import AuthenticatedUser

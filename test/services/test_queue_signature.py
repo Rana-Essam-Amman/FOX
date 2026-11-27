@@ -34,10 +34,10 @@ def test_signature_drift_marks_stale_task_failed_and_drains_queue(defect):
     with patch("app.controllers.manager.redis_manager.sm.state") as state:
         task = manager.dequeue()
     assert task["kwargs"]["task_id"] == "valid"
-    state.patch_task.assert_called_once()
-    assert state.patch_task.call_args.args == ("stale",)
-    assert state.patch_task.call_args.kwargs["state"] == const.TASK_STATE_FAILED
-    assert state.patch_task.call_args.kwargs["failed_stage"] == "dequeue"
+    state.recovery_patch.assert_called_once()
+    assert state.recovery_patch.call_args.args == ("stale",)
+    assert state.recovery_patch.call_args.kwargs["state"] == const.TASK_STATE_FAILED
+    assert state.recovery_patch.call_args.kwargs["failed_stage"] == "dequeue"
 
 
 def test_signature_validation_accepts_supported_partial_callables():

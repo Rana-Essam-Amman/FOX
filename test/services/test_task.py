@@ -29,6 +29,8 @@ class TestTaskService(unittest.TestCase):
     def setUp(self):
         # Direct service tests model the generation already acquired by the
         # production worker. Initial records are created before that mutation.
+        self._tracked_state = tm.sm.state
+        self._existing_task_ids = set(self._tracked_state.list_task_ids())
         self._original_memory_update = MemoryState.update_task
 
         def worker_update(store, task_id, *args, **kwargs):
@@ -53,6 +55,8 @@ class TestTaskService(unittest.TestCase):
     def tearDown(self):
         with tm._cross_post_registry_lock:
             tm._cross_post_futures.clear()
+        for task_id in set(self._tracked_state.list_task_ids()) - self._existing_task_ids:
+            self._tracked_state.authorized_delete(task_id)
         self._memory_update_patch.stop()
 
     @contextmanager

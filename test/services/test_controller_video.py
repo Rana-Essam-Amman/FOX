@@ -244,7 +244,7 @@ class TestVideoControllerTasks(unittest.TestCase):
                 ):
                     body = TaskVideoRequest(video_subject="Coffee", font_name=font_name)
                     with self.assertRaises(HttpException) as raised:
-                        video_controller.create_task(self._request(), body, stop_at="video")
+                        video_controller.create_task(self._request(), body, stop_at="video", user=self._authed_user())
 
                     self.assertEqual(raised.exception.status_code, 403)
                     update_task.assert_not_called()
@@ -295,7 +295,7 @@ class TestVideoControllerTasks(unittest.TestCase):
                     patch.object(video_controller.task_manager, "add_task") as add_task,
                 ):
                     response = video_controller.create_task(
-                        self._request(), body, stop_at="video"
+                        self._request(), body, stop_at="video", user=self._authed_user()
                     )
 
                 self.assertEqual(response["status"], 200)
@@ -335,7 +335,7 @@ class TestVideoControllerTasks(unittest.TestCase):
         user = self._authed_user()
 
         with (
-            patch.object(video_controller.utils, "get_uuid", return_value="task-123"),
+            patch.object(video_controller.utils, "get_uuid", return_value="queue-full-task"),
             patch.object(video_controller.sm.state, "create_task"),
             patch.object(
                 video_controller.task_manager,
@@ -351,7 +351,7 @@ class TestVideoControllerTasks(unittest.TestCase):
                 video_controller.create_task(self._request(), body, stop_at="video")
 
         self.assertEqual(raised.exception.status_code, 429)
-        delete_task.assert_called_once_with("task-123")
+        delete_task.assert_called_once_with("queue-full-task")
 
     def test_create_task_removes_state_when_scheduler_fails(self):
         """调度器未能接管任务时，不能留下永远处于 processing 的状态。"""
@@ -361,8 +361,9 @@ class TestVideoControllerTasks(unittest.TestCase):
         state = sm.MemoryState()
 
         with (
-            patch.object(video_controller.utils, "get_uuid", return_value="task-123"),
+            patch.object(video_controller.utils, "get_uuid", return_value="scheduler-failure-task"),
             patch.object(video_controller.sm, "state", state),
+            patch("app.controllers.v1.video.require_authenticated_user", return_value=self._authed_user()),
             patch.object(
                 video_controller.task_manager,
                 "add_task",
@@ -373,7 +374,7 @@ class TestVideoControllerTasks(unittest.TestCase):
                 video_controller.create_task(self._request(), body, stop_at="video")
 
         self.assertIs(raised.exception, scheduling_error)
-        self.assertIsNone(state.get_task("task-123"))
+        self.assertIsNone(state.get_task("scheduler-failure-task"))
 
     def test_get_all_tasks_preserves_pagination(self):
         """Ownership filtering occurs before pagination; total counts only owned tasks."""
@@ -436,9 +437,14 @@ class TestVideoControllerTasks(unittest.TestCase):
                     return_value=([stored_task], 1),
                 ),
                 patch.dict(config.app, {"endpoint": ""}),
+                patch.object(
+                    video_controller,
+                    "ownership_store",
+                    self._ownership_store_for(task_id),
+                ),
             ):
                 response = video_controller.get_all_tasks(
-                    self._request(), page=1, page_size=10
+                    self._request(), page=1, page_size=10, user=self._authed_user()
                 )
 
             listed = response["data"]["tasks"][0]
@@ -477,8 +483,15 @@ class TestVideoControllerTasks(unittest.TestCase):
                 cross_post_owner="localhost:123:internal",
             )
             with patch.dict(config.app, {"endpoint": ""}):
+                patch.object(
+                    video_controller,
+                    "ownership_store",
+                    self._ownership_store_for(task_id),
+                ),
+            ):
                 response = video_controller.get_task(
-                    self._request(), task_id=task_id, query=MagicMock()
+                    self._request(), task_id=task_id, query=MagicMock(),
+                    user=self._authed_user(),
                 )
 
             self.assertEqual(
@@ -510,7 +523,8 @@ class TestVideoControllerTasks(unittest.TestCase):
             return_value=failed_task,
         ):
             response = video_controller.get_task(
-                self._request(), task_id="failed-task", query=MagicMock()
+                self._request(), task_id="failed-task", query=MagicMock(),
+                user=self._authed_user(),
             )
 
         self.assertEqual(response["data"], failed_task)
@@ -566,10 +580,15 @@ class TestVideoControllerTasks(unittest.TestCase):
                     return_value=task,
                 ),
                 patch.object(video_controller.sm.state, "delete_task") as delete_task,
+                patch.object(
+                    video_controller,
+                    "ownership_store",
+                    self._ownership_store_for(*(item["task_id"] for item in busy_tasks)),
+                ),
             ):
                 with self.assertRaises(HttpException) as raised:
                     video_controller.delete_video(
-                        self._request(), task_id=task["task_id"]
+                        self._request(), task_id=task["task_id"], user=self._authed_user()
                     )
 
                 self.assertEqual(raised.exception.status_code, 409)
@@ -612,10 +631,10 @@ class TestVideoControllerTasks(unittest.TestCase):
         with patch.object(video_controller.sm.state, "get_task", return_value=None):
             for operation in (
                 lambda: video_controller.get_task(
-                    self._request(), task_id="missing", query=MagicMock()
+                    self._request(), task_id="missing", query=MagicMock(), user=self._authed_user()
                 ),
                 lambda: video_controller.delete_video(
-                    self._request(), task_id="missing"
+                    self._request(), task_id="missing", user=self._authed_user()
                 ),
             ):
                 with self.subTest(operation=operation):
@@ -674,7 +693,7 @@ class TestVideoControllerListHTTP(unittest.TestCase):
 
         self.assertEqual(allowed.status_code, 200)
         self.assertEqual(rejected.status_code, 400)
-        get_all.assert_called_once_with(1, 1000)
+        get_all.assert_called_once_with(1, 10000)
 
 
 class TestVideoControllerDeleteHTTP(unittest.TestCase):
@@ -705,6 +724,15 @@ class TestVideoControllerDeleteHTTP(unittest.TestCase):
             combined_videos=[video_path],
             cross_post_state=const.CROSS_POST_STATE_COMPLETE,
         )
+        from app.security.ownership import TaskOwnershipRecord
+        from datetime import datetime, timezone
+        video_controller.ownership_store.create(TaskOwnershipRecord(
+            task_id=task_id,
+            owner_id="user-a",
+            created_at=datetime.now(timezone.utc),
+            kind="video",
+            metadata={},
+        ))
         return task_dir
 
     def test_delete_completed_task_returns_success_response(self):
@@ -745,6 +773,20 @@ class TestVideoControllerDeleteHTTP(unittest.TestCase):
 
 
 class TestVideoControllerFiles(unittest.TestCase):
+    @staticmethod
+    def _owned_store(task_id):
+        from datetime import datetime, timezone
+        from app.security.ownership import InMemoryOwnershipStore, TaskOwnershipRecord
+        store = InMemoryOwnershipStore()
+        store.create(TaskOwnershipRecord(
+            task_id=task_id,
+            owner_id="test-user",
+            created_at=datetime.now(timezone.utc),
+            kind="video",
+            metadata={},
+        ))
+        return store
+
     @staticmethod
     def _request(range_header=None):
         headers = {"x-task-id": "request-123"}
@@ -879,7 +921,10 @@ class TestVideoControllerFiles(unittest.TestCase):
             Path(temp_dir, "clip.mp4").write_bytes(b"0123456789")
             with patch.object(video_controller.utils, "task_dir", return_value=temp_dir):
                 response = asyncio.run(
-                    video_controller.stream_video(self._request("bytes=2-5"), "clip.mp4")
+                    video_controller.stream_video(
+                        self._request("bytes=2-5"), "clip.mp4",
+                        user=__import__("app.security.jwt_auth", fromlist=["AuthenticatedUser"]).AuthenticatedUser(sub="test-user"),
+                    )
                 )
                 with patch("builtins.open", side_effect=OSError("file vanished")):
                     body = asyncio.run(consume(response))
@@ -911,7 +956,10 @@ class TestVideoControllerFiles(unittest.TestCase):
                 return_value=temp_dir,
             ):
                 response = asyncio.run(
-                    video_controller.download_video(self._request(), "final-1.mp4")
+                    video_controller.download_video(
+                        self._request(), "final-1.mp4",
+                        user=__import__("app.security.jwt_auth", fromlist=["AuthenticatedUser"]).AuthenticatedUser(sub="test-user"),
+                    )
                 )
 
         # macOS 的 /var 是 /private/var 符号链接，安全解析会返回真实路径。

@@ -167,13 +167,21 @@ class MemoryState(BaseState):
             task = self._tasks.get(task_id, None)
             return copy.deepcopy(task) if task is not None else None
 
-    def patch_task(self, task_id: str, **kwargs) -> bool:
-        # 异步发布只应补充发布状态，不能覆盖已经保存的视频、字幕等结果。
-        # 在同一把锁内完成存在性判断和字段合并，也可避免任务删除后
-        # 被后台线程重建。
+    def patch_task(
+        self, task_id: str, generation: int | None = None, **kwargs
+    ) -> bool:
+        # Match RedisState: worker-originated patches must retain generation
+        # ownership. The context is copied into cross-post worker threads.
+        expected = generation if generation is not None else current_generation.get()
+        if (
+            isinstance(expected, bool)
+            or not isinstance(expected, int)
+            or expected < 1
+        ):
+            return False
         with self._lock:
             task = self._tasks.get(task_id)
-            if task is None:
+            if task is None or task.get("generation") != expected:
                 return False
             task.update(copy.deepcopy(kwargs))
             return True

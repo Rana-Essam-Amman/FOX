@@ -20,6 +20,7 @@ from app.models.exception import HttpException
 from app.services.state import RedisState, _DELETE_OWNED_TASK_SCRIPT
 from app.security import jwt_auth
 from test.services._oidc_test_authority import authed_client, shared_authority
+from test.services._ownership_isolation import isolate_ownership
 
 
 @pytest.fixture(autouse=True)
@@ -160,8 +161,9 @@ def test_concurrent_replacement_and_delete_always_preserve_foreign_key(native_st
 
 
 @pytest.fixture
-def deletion_client(native_state, tmp_path):
-    state, _ = native_state
+def deletion_client(native_state, tmp_path, monkeypatch):
+    state, key = native_state
+    isolate_ownership(monkeypatch, owned=[(key, "user-a")])
     application = FastAPI()
     application.include_router(video.router)
 

@@ -1,5 +1,6 @@
 import ast
 import copy
+import math
 import threading
 from abc import ABC, abstractmethod
 from contextvars import ContextVar
@@ -77,6 +78,32 @@ return redis.call("DEL", KEYS[1])
 # Set by the worker start path (Increment 3). RedisState mutation methods
 # use this value when no explicit generation is supplied.
 current_generation: ContextVar[int | None] = ContextVar("current_generation", default=None)
+
+
+def _coerce_stored_generation(value, *, allow_zero: bool = False) -> int | None:
+    """Parse only finite integer-valued generations; bool is never a generation."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, float):
+        if not math.isfinite(value) or not value.is_integer():
+            return None
+        parsed = int(value)
+    elif isinstance(value, str):
+        try:
+            numeric = float(value)
+        except ValueError:
+            return None
+        if not math.isfinite(numeric) or not numeric.is_integer():
+            return None
+        parsed = int(numeric)
+    else:
+        return None
+    if parsed < (0 if allow_zero else 1):
+        return None
+    return parsed
+
 
 # Base class for state management
 class BaseState(ABC):
@@ -199,7 +226,11 @@ class MemoryState(BaseState):
 
         with self._lock:
             existing = self._tasks.get(task_id)
-            if existing is None or existing.get("generation") != expected_generation:
+            if (
+                existing is None
+                or _coerce_stored_generation(existing.get("generation"))
+                != expected_generation
+            ):
                 return False
             self._tasks[task_id] = {
                 # Keep fields from earlier pipeline stages, matching Redis
@@ -232,7 +263,10 @@ class MemoryState(BaseState):
             return False
         with self._lock:
             task = self._tasks.get(task_id)
-            if task is None or task.get("generation") != expected:
+            if (
+                task is None
+                or _coerce_stored_generation(task.get("generation")) != expected
+            ):
                 return False
             task.update(copy.deepcopy(kwargs))
             return True
@@ -259,14 +293,10 @@ class MemoryState(BaseState):
             task = self._tasks.get(task_id)
             if task is None:
                 return None
-            stored = task.get("generation", 0)
-            if isinstance(stored, bool):
-                return None
-            if isinstance(stored, str):
-                if not stored.isdigit():
-                    return None
-                stored = int(stored)
-            if not isinstance(stored, int) or stored < 0:
+            stored = _coerce_stored_generation(
+                task.get("generation", 0), allow_zero=True
+            )
+            if stored is None:
                 return None
             generation = stored + 1
             task["generation"] = generation
@@ -284,7 +314,11 @@ class MemoryState(BaseState):
             return False
         with self._lock:
             task = self._tasks.get(task_id)
-            if task is None or task.get("generation") != expected_generation:
+            if (
+                task is None
+                or _coerce_stored_generation(task.get("generation"))
+                != expected_generation
+            ):
                 return False
             task[field] = copy.deepcopy(artifact_reference)
             return True

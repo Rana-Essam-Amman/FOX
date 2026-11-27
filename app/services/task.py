@@ -334,17 +334,33 @@ def _mark_task_failed(
         key: value for key, value in dict(details or {}).items() if key not in failure
     })
     failure.update(failure_details)
-    fields = {key: value for key, value in failure.items() if key != "task_id"}
+    # The generation stored on the task is output data, never proof that
+    # this worker owns it. A stale worker must use only its own context token;
+    # adopting the generation read from Redis would let it overwrite a newer run.
+    expected_generation = current_generation.get()
+    fields = {
+        key: value
+        for key, value in failure.items()
+        if key not in {"task_id", "generation"}
+    }
     write_ok = False
     for attempt in range(_TASK_FAILURE_STATE_WRITE_ATTEMPTS):
         try:
             if attempt == 0:
-                write_ok = bool(sm.state.update_task(task_id, **fields))
+                write_ok = bool(
+                    sm.state.update_task(
+                        task_id, generation=expected_generation, **fields
+                    )
+                )
             else:
                 # A lost acknowledgement may mean the first write succeeded.
                 # Patch only an existing record so retries cannot revive a task
                 # that the user has since deleted.
-                write_ok = bool(sm.state.patch_task(task_id, **fields))
+                write_ok = bool(
+                    sm.state.patch_task(
+                        task_id, generation=expected_generation, **fields
+                    )
+                )
             if write_ok:
                 break
             # Generation rejected; do not retry unfenced.

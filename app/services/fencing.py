@@ -31,6 +31,9 @@ _COMPARE_AND_WRITE_SCRIPT = """
 if redis.call("TYPE", KEYS[1]).ok ~= "hash" then
     return 0
 end
+if redis.call("HGET", KEYS[1], "task_id") ~= KEYS[1] then
+    return 0
+end
 local current = redis.call("HGET", KEYS[1], "generation")
 if not current or tonumber(current) ~= tonumber(ARGV[1]) then
     return 0
@@ -53,6 +56,15 @@ def acquire_generation(redis_client, task_id: str) -> int | None:
     return int(result)
 
 
+def is_valid_generation(value: object) -> bool:
+    """Accept only positive integer generation tokens; bool is not an int here."""
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and value >= 1
+    )
+
+
 def compare_and_write(
     redis_client,
     task_id: str,
@@ -64,6 +76,8 @@ def compare_and_write(
     Returns True if the write succeeded, False if the generation was stale
     or the key is not a task hash.
     """
+    if not is_valid_generation(expected_generation):
+        return False
     if not fields:
         # Still check generation for a no-op confirmation.
         args = [str(expected_generation)]
@@ -133,7 +147,7 @@ def artifact_path_for_generation(task_id: str, base_name: str, generation: int |
     if task_dir is None:
         from app.utils.utils import task_dir as _task_dir
         task_dir = _task_dir(task_id)
-    if generation is not None and generation >= 1:
+    if is_valid_generation(generation):
         stem, ext = os.path.splitext(base_name)
         gen_name = f"{stem}.gen{generation}{ext}"
         return os.path.join(task_dir, gen_name)
@@ -151,7 +165,7 @@ def publish_artifact_reference(
 
     Fail closed on missing/invalid generation or Redis errors.
     """
-    if expected_generation is None or expected_generation < 1:
+    if not is_valid_generation(expected_generation):
         return False
     try:
         success = compare_and_write(

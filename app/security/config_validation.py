@@ -30,7 +30,11 @@ def validate_production_config() -> None:
         missing.append("FOX_OIDC_JWKS_URL")
     if not os.getenv("DATABASE_URL"):
         missing.append("DATABASE_URL")
-    # Redis is no longer required. Rate limiting uses PostgreSQL.
+    # Production workers need shared Redis task state and generation fencing.
+    # PostgreSQL remains the ownership and rate-limit persistence layer.
+    from app.config import config
+    if config.app.get("enable_redis") is not True:
+        missing.append("app.enable_redis=true (shared Redis task state and worker fencing)")
     # Supabase Storage credentials are required for production media.
     if not os.getenv("SUPABASE_URL"):
         missing.append("SUPABASE_URL")

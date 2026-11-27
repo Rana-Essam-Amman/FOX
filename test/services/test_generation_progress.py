@@ -24,6 +24,14 @@ from app.utils import utils
 @pytest.fixture
 def isolated_jobs(monkeypatch):
     store = sm.MemoryState()
+    original_update_task = store.update_task
+
+    def create_fenced_test_task(task_id, *args, **kwargs):
+        if store.get_task(task_id) is None and "generation" not in kwargs:
+            kwargs["generation"] = 1
+        return original_update_task(task_id, *args, **kwargs)
+
+    monkeypatch.setattr(store, "update_task", create_fenced_test_task)
     monkeypatch.setattr(sm, "state", store)
     monkeypatch.setattr(webui_task, "_active_submissions", {})
     monkeypatch.setattr(webui_task, "_task_manager", InMemoryTaskManager(1, 10))
@@ -389,7 +397,7 @@ def test_browser_refresh_recovers_busy_job_and_displays_current_phase(isolated_j
             assert app.button(key="generate_video_button").disabled
             assert any("06:" in c.value for c in app.caption)
             assert any("paid-123" in c.value for c in app.caption)
-        isolated_jobs.patch_task(job, generation_activity={"phase":"downloading", "downloaded_bytes":1048576})
+        isolated_jobs.patch_task(job, generation=1, generation_activity={"phase":"downloading", "downloaded_bytes":1048576})
         app.run()
         assert any("1.0 MB" in c.value for c in app.caption)
         isolated_jobs.update_task(job, state=const.TASK_STATE_FAILED, error="download failed",

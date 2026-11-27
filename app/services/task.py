@@ -2105,11 +2105,10 @@ def start(
     ``allow_server_file_input`` 只供本机 CLI 使用。HTTP API 和 WebUI 必须保持
     默认值，让自定义音频始终受当前任务目录约束。
     """
-    # Acquire a generation through the state-backend contract. Redis uses an
-    # atomic Lua increment; MemoryState uses its lock for single-process runs.
-    # A missing task remains a hard failure for Redis-backed workers. In-memory
-    # script-only/unit entry points may run without a persisted task record.
-    is_redis = hasattr(sm.state, "_redis")
+    # Every backend must return a real positive generation. API, WebUI and CLI
+    # create the task record before starting the worker; allowing an in-memory
+    # worker to run without one would bypass the same fencing contract enforced
+    # by Redis and make behavior depend on the configured backend.
     generation = None
     try:
         generation = sm.state.acquire_generation(task_id)
@@ -2118,7 +2117,7 @@ def start(
         if _generation_handoff is not None:
             _generation_handoff.fail()
         raise GenerationAcquisitionError(f"failed to acquire generation: {exc}") from exc
-    if is_redis and (
+    if (
         isinstance(generation, bool)
         or not isinstance(generation, int)
         or generation < 1

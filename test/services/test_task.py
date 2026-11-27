@@ -34,11 +34,10 @@ class TestTaskService(unittest.TestCase):
         self._original_memory_update = MemoryState.update_task
 
         def worker_update(store, task_id, *args, **kwargs):
+            # Direct service tests model generation ownership, but must not
+            # manufacture task records as a side effect of a worker mutation.
+            # Production entrypoints create the record before scheduling work.
             generation = kwargs.pop("generation", 1)
-            if store.get_task(task_id) is None:
-                return store.create_task(
-                    task_id, *args, generation=generation, **kwargs
-                )
             return self._original_memory_update(
                 store, task_id, *args, generation=generation, **kwargs
             )

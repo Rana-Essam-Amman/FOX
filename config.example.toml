@@ -713,8 +713,10 @@ endpoint = ""
 # Example: material_directory = "/path/to/videos"
 material_directory = ""
 
-# Optional Redis-backed task state. Keep Redis private to this application;
+# Redis-backed task state and queue. Keep Redis private to this application;
 # untrusted writers must not be able to modify serialized task records.
+# Required when FOX_ENV=production for shared state and generation fencing.
+# Local single-process development may leave this disabled.
 enable_redis = false
 redis_host = "localhost"
 redis_port = 6379

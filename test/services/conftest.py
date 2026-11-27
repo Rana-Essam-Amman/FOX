@@ -35,7 +35,8 @@ def prepare_direct_memory_workers(request, monkeypatch):
     """
     integration_modules = {
         "test_controller_video.py", "test_cli.py", "test_webui_task.py",
-        "test_redis_delete_ownership.py", "test_concurrent_task_delete.py",
+        "test_redis_delete_ownership.py", "test_redis_short_form_requests.py",
+        "test_concurrent_task_delete.py",
         "test_phase1_security.py", "test_task_manager.py",
     }
     if request.node.path.name in integration_modules:

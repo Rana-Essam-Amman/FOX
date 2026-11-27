@@ -510,7 +510,7 @@ class TestVideoControllerTasks(unittest.TestCase):
             self.assertIn("cross_post_owner", sm.state.get_task(task_id))
             self.assertEqual(sm.state.get_task(task_id)["videos"], [video_path])
         finally:
-            sm.state.delete_task(task_id)
+            sm.state.authorized_delete(task_id)
             shutil.rmtree(task_dir, ignore_errors=True)
 
     def test_task_query_preserves_structured_failure_details(self):
@@ -766,7 +766,7 @@ class TestVideoControllerDeleteHTTP(unittest.TestCase):
             response = self.client.delete(f"/api/v1/tasks/{task_id}")
         finally:
             shutil.rmtree(task_dir, ignore_errors=True)
-            sm.state.delete_task(task_id)
+            sm.state.authorized_delete(task_id)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
@@ -977,6 +977,10 @@ class TestVideoControllerFiles(unittest.TestCase):
                     "ownership_store",
                     self._owned_store("clip.mp4"),
                 ),
+                patch(
+                    "app.security.ownership.ownership_store",
+                    self._owned_store("clip.mp4"),
+                ),
             ):
                 with self.assertRaises(HttpException) as raised:
                     asyncio.run(
@@ -1053,6 +1057,10 @@ class TestVideoControllerFiles(unittest.TestCase):
                 patch.object(
                     video_controller,
                     "ownership_store",
+                    self._owned_store(*(filename for filename, _ in cases)),
+                ),
+                patch(
+                    "app.security.ownership.ownership_store",
                     self._owned_store(*(filename for filename, _ in cases)),
                 ),
                 patch(

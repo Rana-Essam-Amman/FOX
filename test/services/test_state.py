@@ -154,14 +154,15 @@ class TestMemoryState(unittest.TestCase):
 
     def test_progress_update_preserves_existing_task_details(self):
         state = MemoryState()
-        state.update_task(
+        state.create_task(
             "task-1",
             state=const.TASK_STATE_PROCESSING,
+            generation=1,
             video_subject="A day in Shanghai",
             material_sources=["source.mp4"],
         )
 
-        state.update_task("task-1", progress=25)
+        state.update_task("task-1", generation=1, progress=25)
 
         task = state.get_task("task-1")
         self.assertEqual(task["progress"], 25)
@@ -170,7 +171,7 @@ class TestMemoryState(unittest.TestCase):
 
     def test_get_task_and_get_all_tasks_return_isolated_snapshots(self):
         state = MemoryState()
-        state.update_task(
+        state.create_task(
             "task-1",
             state=const.TASK_STATE_PROCESSING,
             progress=25,
@@ -199,8 +200,8 @@ class TestMemoryState(unittest.TestCase):
 
         state = MemoryState()
         off_page = CopyTracked()
-        state.update_task("task-1", videos=["first.mp4"])
-        state.update_task("task-2", payload=off_page)
+        state.create_task("task-1", videos=["first.mp4"])
+        state.create_task("task-2", payload=off_page)
         # Input values are snapshotted on update; track the stored payload
         # so this test measures only copies made by pagination.
         off_page = state._tasks["task-2"]["payload"]
@@ -223,35 +224,35 @@ class TestMemoryState(unittest.TestCase):
         self.assertFalse(state.recovery_patch("missing", state=-1, error="gone"))
 
         # Never-started (absent generation) + None is permitted.
-        state.update_task("never", state=const.TASK_STATE_PROCESSING)
+        state.create_task("never", state=const.TASK_STATE_PROCESSING)
         self.assertTrue(
             state.recovery_patch("never", expected_generation=None, state=-1, error="ok")
         )
         self.assertEqual(state.get_task("never")["state"], -1)
 
         # Absent generation + positive expected is rejected.
-        state.update_task("absent", state=const.TASK_STATE_PROCESSING)
+        state.create_task("absent", state=const.TASK_STATE_PROCESSING)
         self.assertFalse(
             state.recovery_patch("absent", expected_generation=1, state=-1, error="no")
         )
         self.assertEqual(state.get_task("absent")["state"], const.TASK_STATE_PROCESSING)
 
         # Exact match is permitted.
-        state.update_task("match", state=const.TASK_STATE_PROCESSING, generation=1)
+        state.create_task("match", state=const.TASK_STATE_PROCESSING, generation=1)
         self.assertTrue(
             state.recovery_patch("match", expected_generation=1, state=-1, error="ok")
         )
         self.assertEqual(state.get_task("match")["state"], -1)
 
         # Stale generation is rejected.
-        state.update_task("stale", state=const.TASK_STATE_PROCESSING, generation=2)
+        state.create_task("stale", state=const.TASK_STATE_PROCESSING, generation=2)
         self.assertFalse(
             state.recovery_patch("stale", expected_generation=1, state=-1, error="no")
         )
         self.assertEqual(state.get_task("stale")["state"], const.TASK_STATE_PROCESSING)
 
         # Zero / negative expected are rejected.
-        state.update_task("zero", state=const.TASK_STATE_PROCESSING, generation=1)
+        state.create_task("zero", state=const.TASK_STATE_PROCESSING, generation=1)
         self.assertFalse(
             state.recovery_patch("zero", expected_generation=0, state=-1, error="no")
         )
@@ -261,7 +262,7 @@ class TestMemoryState(unittest.TestCase):
         self.assertEqual(state.get_task("zero")["state"], const.TASK_STATE_PROCESSING)
 
         # Absent + zero is rejected.
-        state.update_task("absent-zero", state=const.TASK_STATE_PROCESSING)
+        state.create_task("absent-zero", state=const.TASK_STATE_PROCESSING)
         self.assertFalse(
             state.recovery_patch("absent-zero", expected_generation=0, state=-1, error="no")
         )
@@ -273,7 +274,7 @@ class TestMemoryState(unittest.TestCase):
         )
 
         # Boolean expected_generation is rejected (True is not generation 1).
-        state.update_task("bool", state=const.TASK_STATE_PROCESSING, generation=1)
+        state.create_task("bool", state=const.TASK_STATE_PROCESSING, generation=1)
         self.assertFalse(
             state.recovery_patch("bool", expected_generation=True, state=-1, error="no")
         )
@@ -299,45 +300,45 @@ class TestMemoryState(unittest.TestCase):
         self.assertEqual(state.get_task("bool")["state"], const.TASK_STATE_PROCESSING)
 
         # Stored boolean generations are rejected (True is not generation 1).
-        state.update_task("stored-true", state=const.TASK_STATE_PROCESSING, generation=True)
+        state.create_task("stored-true", state=const.TASK_STATE_PROCESSING, generation=True)
         self.assertFalse(
             state.recovery_patch("stored-true", expected_generation=1, state=-1, error="no")
         )
         self.assertEqual(state.get_task("stored-true")["state"], const.TASK_STATE_PROCESSING)
-        state.update_task("stored-false", state=const.TASK_STATE_PROCESSING, generation=False)
+        state.create_task("stored-false", state=const.TASK_STATE_PROCESSING, generation=False)
         self.assertFalse(
             state.recovery_patch("stored-false", expected_generation=1, state=-1, error="no")
         )
         self.assertEqual(state.get_task("stored-false")["state"], const.TASK_STATE_PROCESSING)
 
         # Fractional stored generation is rejected (no truncation).
-        state.update_task("frac", state=const.TASK_STATE_PROCESSING, generation=1.5)
+        state.create_task("frac", state=const.TASK_STATE_PROCESSING, generation=1.5)
         self.assertFalse(
             state.recovery_patch("frac", expected_generation=1, state=-1, error="no")
         )
         self.assertEqual(state.get_task("frac")["state"], const.TASK_STATE_PROCESSING)
 
         # Exact integer-valued float is accepted for Redis tonumber parity.
-        state.update_task("float-int", state=const.TASK_STATE_PROCESSING, generation=1.0)
+        state.create_task("float-int", state=const.TASK_STATE_PROCESSING, generation=1.0)
         self.assertTrue(
             state.recovery_patch("float-int", expected_generation=1, state=-1, error="ok")
         )
         self.assertEqual(state.get_task("float-int")["state"], -1)
 
         # Pure integer string is accepted.
-        state.update_task("str-int", state=const.TASK_STATE_PROCESSING, generation="1")
+        state.create_task("str-int", state=const.TASK_STATE_PROCESSING, generation="1")
         self.assertTrue(
             state.recovery_patch("str-int", expected_generation=1, state=-1, error="ok")
         )
         self.assertEqual(state.get_task("str-int")["state"], -1)
 
         # Malformed strings and unsupported objects are rejected.
-        state.update_task("bad-str", state=const.TASK_STATE_PROCESSING, generation="1.5")
+        state.create_task("bad-str", state=const.TASK_STATE_PROCESSING, generation="1.5")
         self.assertFalse(
             state.recovery_patch("bad-str", expected_generation=1, state=-1, error="no")
         )
         self.assertEqual(state.get_task("bad-str")["state"], const.TASK_STATE_PROCESSING)
-        state.update_task("obj", state=const.TASK_STATE_PROCESSING, generation=object())
+        state.create_task("obj", state=const.TASK_STATE_PROCESSING, generation=object())
         self.assertFalse(
             state.recovery_patch("obj", expected_generation=1, state=-1, error="no")
         )
@@ -350,7 +351,7 @@ class TestMemoryState(unittest.TestCase):
 
         def update_tasks(thread_index):
             for task_index in range(tasks_per_thread):
-                state.update_task(
+                state.create_task(
                     f"task-{thread_index}-{task_index}",
                     state=const.TASK_STATE_PROCESSING,
                     progress=task_index,
@@ -373,7 +374,7 @@ class TestMemoryState(unittest.TestCase):
     def test_patch_task_preserves_generated_outputs(self):
         """异步发布更新不能覆盖已经完成的视频任务字段。"""
         state = MemoryState()
-        state.update_task(
+        state.create_task(
             "task-1",
             state=const.TASK_STATE_COMPLETE,
             progress=100,

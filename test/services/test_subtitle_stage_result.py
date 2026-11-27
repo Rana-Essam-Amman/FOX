@@ -35,7 +35,7 @@ class TestSubtitleStageResult(unittest.TestCase):
         maker = voice.ensure_legacy_submaker_fields(SubMaker())
         with tempfile.TemporaryDirectory() as directory:
             result = self._run(maker, directory, state)
-            self.assertFalse(Path(directory, "subtitle.srt").exists())
+            self.assertFalse(Path(directory, "subtitle.gen1.srt").exists())
             self.assertEqual(result["state"], const.TASK_STATE_FAILED)
             self.assertEqual(result["failed_stage"], "subtitle")
             self.assertIn("subtitle", result["error"])

@@ -1763,6 +1763,7 @@ def _run_batch_tasks(args: argparse.Namespace, tasks: list[VideoParams]) -> int:
         result = None
         failed_stage = None
         error = None
+        created = False
         try:
             created = tm.sm.state.create_task(
                 task_id,
@@ -1781,13 +1782,14 @@ def _run_batch_tasks(args: argparse.Namespace, tasks: list[VideoParams]) -> int:
         except Exception as exc:
             failed_stage = "runtime"
             error = str(exc)
-            tm.sm.state.recovery_patch(
-                task_id,
-                expected_generation=None,
-                state=tm.const.TASK_STATE_FAILED,
-                failed_stage=failed_stage,
-                error=error,
-            )
+            if created:
+                tm.sm.state.recovery_patch(
+                    task_id,
+                    expected_generation=None,
+                    state=tm.const.TASK_STATE_FAILED,
+                    failed_stage=failed_stage,
+                    error=error,
+                )
             logger.exception(
                 "CLI batch task failed with an unexpected error: "
                 f"index={index}, task_id={task_id}, error={exc}"
@@ -1864,6 +1866,7 @@ def run_cli(argv: Sequence[str] | None = None) -> int:
 
     task_id = args.task_id or utils.get_uuid()
     logger.info(f"start CLI task: task_id={task_id}, stop_at={args.stop_at}")
+    created = False
     try:
         created = tm.sm.state.create_task(
             task_id,
@@ -1883,13 +1886,14 @@ def run_cli(argv: Sequence[str] | None = None) -> int:
             allow_server_file_input=True,
         )
     except Exception as exc:
-        tm.sm.state.recovery_patch(
-            task_id,
-            expected_generation=None,
-            state=tm.const.TASK_STATE_FAILED,
-            failed_stage="runtime",
-            error=str(exc),
-        )
+        if created:
+            tm.sm.state.recovery_patch(
+                task_id,
+                expected_generation=None,
+                state=tm.const.TASK_STATE_FAILED,
+                failed_stage="runtime",
+                error=str(exc),
+            )
         logger.exception(
             f"CLI task failed with an unexpected error: task_id={task_id}, error={exc}"
         )

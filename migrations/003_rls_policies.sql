@@ -33,3 +33,17 @@ CREATE POLICY task_ownership_service_all
     TO service_role
     USING (true)
     WITH CHECK (true);
+
+
+-- Rate-limit counters contain per-user identifiers and enforcement state.
+-- No anon/authenticated policy is created: only the trusted service role may
+-- read or mutate these rows through the server-side gateway.
+ALTER TABLE rate_limit_counters ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS rate_limit_counters_service_all ON rate_limit_counters;
+CREATE POLICY rate_limit_counters_service_all
+    ON rate_limit_counters
+    FOR ALL
+    TO service_role
+    USING (true)
+    WITH CHECK (true);

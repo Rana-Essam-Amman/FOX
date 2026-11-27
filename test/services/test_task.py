@@ -1,4 +1,5 @@
 import unittest
+from contextlib import contextmanager
 import os
 import shutil
 import sys
@@ -34,6 +35,14 @@ class TestTaskService(unittest.TestCase):
     def tearDown(self):
         with tm._cross_post_registry_lock:
             tm._cross_post_futures.clear()
+
+    @contextmanager
+    def _worker_generation(self, generation=1):
+        token = tm.current_generation.set(generation)
+        try:
+            yield
+        finally:
+            tm.current_generation.reset(token)
 
     def test_is_task_busy_covers_generation_and_cross_posting(self):
         """删除入口必须同时识别视频生成和跨平台发布的活跃状态。"""
@@ -1595,6 +1604,7 @@ class TestTaskService(unittest.TestCase):
         }
         service = tm.upload_post.upload_post_service
         state = MemoryState()
+        state.create_task("youtube-cross-post")
 
         def run_immediately(function, *args):
             future = Future()
@@ -1698,6 +1708,7 @@ class TestTaskService(unittest.TestCase):
         params = VideoParams(video_subject="Coffee")
         service = tm.upload_post.upload_post_service
         state = MemoryState()
+        state.create_task("deferred-cross-post")
         submitted = []
 
         def capture_submission(function, *args):
@@ -1762,8 +1773,9 @@ class TestTaskService(unittest.TestCase):
     def test_cross_post_worker_failure_does_not_change_video_completion(self):
         """发布线程异常只能更新发布状态，不能破坏已完成的视频结果。"""
         state = MemoryState()
-        state.update_task(
+        state.create_task(
             "cross-post-worker-failure",
+            generation=1,
             state=tm.const.TASK_STATE_COMPLETE,
             progress=100,
             videos=["final.mp4"],
@@ -1779,7 +1791,8 @@ class TestTaskService(unittest.TestCase):
             ),
             patch.object(tm.upload_post, "cross_post_video") as cross_post,
         ):
-            tm._run_cross_post(
+            with self._worker_generation():
+                tm._run_cross_post(
                 "cross-post-worker-failure",
                 ("final.mp4",),
                 "Coffee",
@@ -1799,8 +1812,9 @@ class TestTaskService(unittest.TestCase):
     def test_background_upload_request_id_is_saved_while_polling(self):
         """An interrupted worker must leave the remote upload ID in task state."""
         state = MemoryState()
-        state.update_task(
+        state.create_task(
             "background-upload",
+            generation=1,
             state=tm.const.TASK_STATE_COMPLETE,
             progress=100,
             videos=["final.mp4"],
@@ -1822,7 +1836,8 @@ class TestTaskService(unittest.TestCase):
                 side_effect=upload_with_background_start,
             ),
         ):
-            tm._run_cross_post(
+            with self._worker_generation():
+                tm._run_cross_post(
                 "background-upload",
                 ("final.mp4",),
                 "Coffee",
@@ -1845,8 +1860,9 @@ class TestTaskService(unittest.TestCase):
     def test_background_upload_request_id_survives_worker_error(self):
         """A polling exception must not erase the only remote recovery handle."""
         state = MemoryState()
-        state.update_task(
+        state.create_task(
             "background-upload-error",
+            generation=1,
             state=tm.const.TASK_STATE_COMPLETE,
             progress=100,
             videos=["final.mp4"],
@@ -1866,7 +1882,8 @@ class TestTaskService(unittest.TestCase):
                 side_effect=interrupted_upload,
             ),
         ):
-            tm._run_cross_post(
+            with self._worker_generation():
+                tm._run_cross_post(
                 "background-upload-error",
                 ("final.mp4",),
                 "Coffee",
@@ -1887,6 +1904,7 @@ class TestTaskService(unittest.TestCase):
         params = VideoParams(video_subject="Coffee")
         service = tm.upload_post.upload_post_service
         state = MemoryState()
+        state.create_task("cross-post-queue-full-result")
 
         with (
             patch.object(tm, "generate_script", return_value="generated script"),
@@ -1931,8 +1949,9 @@ class TestTaskService(unittest.TestCase):
         state = MemoryState()
         slots = MagicMock()
         slots.acquire.return_value = True
-        state.update_task(
+        state.create_task(
             "cross-post-schedule-failure",
+            generation=1,
             state=tm.const.TASK_STATE_COMPLETE,
             progress=100,
             videos=["final.mp4"],
@@ -1948,7 +1967,8 @@ class TestTaskService(unittest.TestCase):
                 side_effect=RuntimeError("executor is shutting down"),
             ),
         ):
-            scheduling_error = tm._schedule_cross_post(
+            with self._worker_generation():
+                scheduling_error = tm._schedule_cross_post(
                 task_id="cross-post-schedule-failure",
                 video_paths=["final.mp4"],
                 params=VideoParams(video_subject="Coffee"),
@@ -1969,8 +1989,9 @@ class TestTaskService(unittest.TestCase):
         """发布工作异常退出时也必须归还容量，避免后续发布永久被拒绝。"""
         slots = MagicMock()
         state = MemoryState()
-        state.update_task(
+        state.create_task(
             "task-id",
+            generation=1,
             state=tm.const.TASK_STATE_COMPLETE,
             progress=100,
             cross_post_state=tm.const.CROSS_POST_STATE_PENDING,
@@ -1985,7 +2006,8 @@ class TestTaskService(unittest.TestCase):
                 side_effect=RuntimeError("worker crashed"),
             ),
         ):
-            tm._run_cross_post_with_slot("task-id")
+            with self._worker_generation():
+                tm._run_cross_post_with_slot("task-id")
 
         slots.release.assert_called_once_with()
         task = state.get_task("task-id")
@@ -2039,8 +2061,9 @@ class TestTaskService(unittest.TestCase):
                 return super().patch_task(task_id, **kwargs)
 
         state = FlakyMemoryState()
-        state.update_task(
+        state.create_task(
             "transient-state-failure",
+            generation=1,
             state=tm.const.TASK_STATE_COMPLETE,
             progress=100,
             videos=["final.mp4"],
@@ -2056,7 +2079,8 @@ class TestTaskService(unittest.TestCase):
             ) as cross_post,
             patch.object(tm.time, "sleep") as sleep,
         ):
-            tm._run_cross_post(
+            with self._worker_generation():
+                tm._run_cross_post(
                 "transient-state-failure",
                 ("final.mp4",),
                 "Coffee",
@@ -2145,8 +2169,9 @@ class TestTaskService(unittest.TestCase):
             "hashtags": ["#coffee", "#shorts"],
         }
         state = MemoryState()
-        state.update_task(
+        state.create_task(
             "shared-youtube-metadata",
+            generation=1,
             state=tm.const.TASK_STATE_COMPLETE,
             progress=100,
             videos=["final-1.mp4", "final-2.mp4"],
@@ -2166,7 +2191,8 @@ class TestTaskService(unittest.TestCase):
                 return_value={"success": True},
             ) as cross_post,
         ):
-            tm._run_cross_post(
+            with self._worker_generation():
+                tm._run_cross_post(
                 "shared-youtube-metadata",
                 ("final-1.mp4", "final-2.mp4"),
                 "Coffee",
@@ -2261,8 +2287,9 @@ class TestTaskService(unittest.TestCase):
                 "remote-processing": tm.const.CROSS_POST_STATE_PROCESSING,
                 "already-complete": tm.const.CROSS_POST_STATE_COMPLETE,
             }[task_id]
-            state.update_task(
+            state.create_task(
                 task_id,
+                generation=1,
                 state=tm.const.TASK_STATE_COMPLETE,
                 progress=100,
                 videos=["final.mp4"],
@@ -2317,8 +2344,9 @@ class TestTaskService(unittest.TestCase):
             ("stale-processing", tm.const.CROSS_POST_STATE_PROCESSING),
             ("already-complete", tm.const.CROSS_POST_STATE_COMPLETE),
         ):
-            state.update_task(
+            state.create_task(
                 task_id,
+                generation=1,
                 state=tm.const.TASK_STATE_COMPLETE,
                 progress=100,
                 videos=["final.mp4"],
@@ -2399,8 +2427,9 @@ class TestTaskService(unittest.TestCase):
     def test_cross_post_terminal_check_converts_active_state_to_failure(self):
         """worker 已结束但状态仍活动时，最终回调必须补写失败终态。"""
         state = MemoryState()
-        state.update_task(
+        state.create_task(
             "unfinished-cross-post",
+            generation=1,
             state=tm.const.TASK_STATE_COMPLETE,
             progress=100,
             videos=["final.mp4"],
@@ -2408,7 +2437,8 @@ class TestTaskService(unittest.TestCase):
         )
 
         with patch.object(tm.sm, "state", state):
-            tm._ensure_cross_post_terminal_state("unfinished-cross-post")
+            with self._worker_generation():
+                tm._ensure_cross_post_terminal_state("unfinished-cross-post")
 
         task = state.get_task("unfinished-cross-post")
         self.assertEqual(task["videos"], ["final.mp4"])
@@ -2432,8 +2462,9 @@ class TestTaskService(unittest.TestCase):
     def test_cancelled_cross_post_future_releases_slot_and_records_failure(self):
         """排队 Future 被取消时也必须释放容量并写入失败终态。"""
         state = MemoryState()
-        state.update_task(
+        state.create_task(
             "cancelled-cross-post",
+            generation=1,
             state=tm.const.TASK_STATE_COMPLETE,
             progress=100,
             cross_post_state=tm.const.CROSS_POST_STATE_PENDING,
@@ -2447,7 +2478,9 @@ class TestTaskService(unittest.TestCase):
             patch.object(tm.sm, "state", state),
             patch.object(tm, "_cross_post_slots", slots),
         ):
-            tm._finalize_cross_post_future("cancelled-cross-post", future)
+            tm._finalize_cross_post_future(
+                "cancelled-cross-post", future, generation=1
+            )
 
         slots.release.assert_called_once_with()
         self.assertFalse(tm._is_cross_post_active_in_process("cancelled-cross-post"))
@@ -2518,8 +2551,9 @@ class TestTaskService(unittest.TestCase):
     def test_cross_post_queue_full_rejects_only_publishing(self):
         """发布队列满载时必须保留成片，并且不能继续向线程池提交任务。"""
         state = MemoryState()
-        state.update_task(
+        state.create_task(
             "cross-post-queue-full",
+            generation=1,
             state=tm.const.TASK_STATE_COMPLETE,
             progress=100,
             videos=["final.mp4"],
@@ -2535,7 +2569,8 @@ class TestTaskService(unittest.TestCase):
             ),
             patch.object(tm._cross_post_executor, "submit") as submit,
         ):
-            scheduling_error = tm._schedule_cross_post(
+            with self._worker_generation():
+                scheduling_error = tm._schedule_cross_post(
                 task_id="cross-post-queue-full",
                 video_paths=["final.mp4"],
                 params=VideoParams(video_subject="Coffee"),

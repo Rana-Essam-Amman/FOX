@@ -8,7 +8,7 @@ from unittest.mock import patch
 import redis
 
 from app import asgi
-from test.services._oidc_test_authority import authed_client
+from test.services._oidc_test_authority import authed_client, install_oidc_for
 from app.config import config
 from app.controllers.manager.redis_manager import RedisTaskManager
 from app.controllers.v1 import video as video_controller
@@ -18,6 +18,7 @@ from app.services import state as sm
 
 class TestRedisShortFormRequests(unittest.TestCase):
     def setUp(self):
+        install_oidc_for(self)
         host = os.getenv("MPT_TEST_REDIS_HOST", "127.0.0.1")
         port = int(os.getenv("MPT_TEST_REDIS_PORT", "6379"))
         db = int(os.getenv("MPT_TEST_REDIS_DB", "15"))

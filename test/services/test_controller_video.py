@@ -239,7 +239,7 @@ class TestVideoControllerTasks(unittest.TestCase):
                 with (
                     self.subTest(font_name=font_name),
                     patch.object(video_controller.utils, "font_dir", return_value=str(font_dir)),
-                    patch.object(video_controller.sm.state, "update_task") as update_task,
+                    patch.object(video_controller.sm.state, "create_task") as update_task,
                     patch.object(video_controller.task_manager, "add_task") as add_task,
                 ):
                     body = TaskVideoRequest(video_subject="Coffee", font_name=font_name)
@@ -264,7 +264,7 @@ class TestVideoControllerTasks(unittest.TestCase):
 
             with (
                 patch.object(video_controller.utils, "font_dir", return_value=str(font_dir)),
-                patch.object(video_controller.sm.state, "update_task") as update_task,
+                patch.object(video_controller.sm.state, "create_task") as update_task,
                 patch.object(video_controller.task_manager, "add_task") as add_task,
             ):
                 body = TaskVideoRequest(video_subject="Coffee", font_name="linked.ttf")
@@ -291,7 +291,7 @@ class TestVideoControllerTasks(unittest.TestCase):
                 with (
                     self.subTest(font_name=body.font_name, enabled=body.subtitle_enabled),
                     patch.object(video_controller.utils, "font_dir", return_value=str(font_dir)),
-                    patch.object(video_controller.sm.state, "update_task") as update_task,
+                    patch.object(video_controller.sm.state, "create_task") as update_task,
                     patch.object(video_controller.task_manager, "add_task") as add_task,
                 ):
                     response = video_controller.create_task(
@@ -336,7 +336,7 @@ class TestVideoControllerTasks(unittest.TestCase):
 
         with (
             patch.object(video_controller.utils, "get_uuid", return_value="task-123"),
-            patch.object(video_controller.sm.state, "update_task"),
+            patch.object(video_controller.sm.state, "create_task"),
             patch.object(
                 video_controller.task_manager,
                 "add_task",

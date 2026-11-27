@@ -467,7 +467,7 @@ class TestVideoControllerTasks(unittest.TestCase):
         Path(subtitle_path).write_text("subtitle", encoding="utf-8")
 
         try:
-            sm.state.update_task(
+            sm.state.create_task(
                 task_id,
                 state=const.TASK_STATE_COMPLETE,
                 videos=[video_path],
@@ -697,7 +697,7 @@ class TestVideoControllerDeleteHTTP(unittest.TestCase):
         task_dir = utils.task_dir(task_id)
         video_path = os.path.join(task_dir, "final-1.mp4")
         Path(video_path).write_bytes(b"fake-video")
-        sm.state.update_task(
+        sm.state.create_task(
             task_id,
             state=const.TASK_STATE_COMPLETE,
             progress=100,

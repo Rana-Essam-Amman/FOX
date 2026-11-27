@@ -27,9 +27,14 @@ def isolated_jobs(monkeypatch):
     original_update_task = store.update_task
 
     def create_fenced_test_task(task_id, *args, **kwargs):
-        if store.get_task(task_id) is None and "generation" not in kwargs:
-            kwargs["generation"] = 1
-        return original_update_task(task_id, *args, **kwargs)
+        generation = kwargs.pop("generation", 1)
+        if store.get_task(task_id) is None:
+            return store.create_task(
+                task_id, *args, generation=generation, **kwargs
+            )
+        return original_update_task(
+            task_id, *args, generation=generation, **kwargs
+        )
 
     monkeypatch.setattr(store, "update_task", create_fenced_test_task)
     monkeypatch.setattr(sm, "state", store)

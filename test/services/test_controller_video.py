@@ -1063,10 +1063,6 @@ class TestVideoControllerFiles(unittest.TestCase):
                     "app.security.ownership.ownership_store",
                     self._owned_store(*(filename for filename, _ in cases)),
                 ),
-                patch(
-                    "app.security.ownership.ownership_store",
-                    self._owned_store(*(filename for filename, _ in cases)),
-                ),
             ):
                 for filename, expected_header in cases:
                     with self.subTest(filename=filename):

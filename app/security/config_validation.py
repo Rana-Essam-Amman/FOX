@@ -34,7 +34,9 @@ def validate_production_config() -> None:
     # PostgreSQL remains the ownership and rate-limit persistence layer.
     from app.config import config
     if config.app.get("enable_redis") is not True:
-        missing.append("app.enable_redis=true (shared Redis task state and worker fencing)")
+        missing.append(
+            "app.enable_redis=true (shared Redis task state and worker fencing)"
+        )
     # Supabase Storage credentials are required for production media.
     if not os.getenv("SUPABASE_URL"):
         missing.append("SUPABASE_URL")

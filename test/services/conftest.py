@@ -56,4 +56,25 @@ def prepare_direct_memory_workers(request, monkeypatch):
         return original_start(task_id, *args, **kwargs)
 
     monkeypatch.setattr(task, "start", start_after_task_creation)
+
+    original_get_video_materials = task.get_video_materials
+
+    @wraps(original_get_video_materials)
+    def get_materials_in_worker_scope(task_id, *args, **kwargs):
+        state = task.sm.state
+        if (
+            isinstance(state, MemoryState)
+            and task.current_generation.get() is None
+        ):
+            if state.get_task(task_id) is None:
+                state.create_task(task_id)
+            generation = state.acquire_generation(task_id)
+            token = task.current_generation.set(generation)
+            try:
+                return original_get_video_materials(task_id, *args, **kwargs)
+            finally:
+                task.current_generation.reset(token)
+        return original_get_video_materials(task_id, *args, **kwargs)
+
+    monkeypatch.setattr(task, "get_video_materials", get_materials_in_worker_scope)
     yield

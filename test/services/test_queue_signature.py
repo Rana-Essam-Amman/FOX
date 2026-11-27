@@ -50,3 +50,35 @@ def test_signature_validation_accepts_supported_partial_callables():
         task = manager.dequeue()
     assert task["func"] is bound
     assert isinstance(task["kwargs"]["params"], VideoParams)
+
+def test_generation_acquisition_failure_marks_api_task_failed():
+    from app.services import task as tm
+
+    manager, client = make_manager()
+
+    def fail_before_pipeline(task_id, _generation_handoff):
+        raise tm.GenerationAcquisitionError("Redis unavailable")
+
+    with (
+        patch("app.controllers.manager.redis_manager.sm.state") as state,
+        patch(
+            "app.security.task_execution.authorize_task_execution",
+            return_value=None,
+        ),
+        patch.object(manager, "_renew_slot_until_done"),
+        patch.object(manager, "task_done"),
+    ):
+        manager._run_reserved_task(
+            "reserved-slot",
+            fail_before_pipeline,
+            task_id="generation-unavailable",
+        )
+
+    state.recovery_patch.assert_called_once_with(
+        "generation-unavailable",
+        expected_generation=None,
+        state=const.TASK_STATE_FAILED,
+        failed_stage="generation_acquisition",
+        error="GenerationAcquisitionError: Redis unavailable",
+    )
+    client.zrem.assert_called_once_with(manager.running_slots_key, "reserved-slot")

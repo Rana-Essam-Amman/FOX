@@ -1332,7 +1332,7 @@ class TestTaskService(unittest.TestCase):
         finally:
             shutil.rmtree(task_dir, ignore_errors=True)
 
-        self.assertTrue(subtitle_path.endswith("subtitle.srt"))
+        self.assertTrue(subtitle_path.endswith("subtitle.gen1.srt"))
         created_path = create.call_args.kwargs["subtitle_file"]
         self.assertNotEqual(created_path, subtitle_path)
         self.assertEqual(Path(created_path).parent, Path(subtitle_path).parent)
@@ -1393,7 +1393,7 @@ class TestTaskService(unittest.TestCase):
         finally:
             shutil.rmtree(task_dir, ignore_errors=True)
 
-        self.assertTrue(subtitle_path.endswith("subtitle.srt"))
+        self.assertTrue(subtitle_path.endswith("subtitle.gen1.srt"))
         created_path = create.call_args.kwargs["subtitle_file"]
         self.assertNotEqual(created_path, subtitle_path)
         self.assertEqual(Path(created_path).parent, Path(subtitle_path).parent)

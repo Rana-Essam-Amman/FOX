@@ -835,6 +835,7 @@ def test_terminal_logger_reload_preserves_task_log_handler():
 def test_worker_wrapper_failure_is_saved_instead_of_leaving_processing_state():
     """日志或配置包装层异常也必须转换成可查询的失败终态。"""
     task_id = "worker-wrapper-failure-test"
+    assert webui_task.sm.state.create_task(task_id)
     with (
         patch.object(webui_task.tm, "start", side_effect=RuntimeError("lock failed")),
         patch.object(

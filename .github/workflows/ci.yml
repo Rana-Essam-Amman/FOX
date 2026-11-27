@@ -37,7 +37,7 @@ jobs:
           POSTGRES_PASSWORD: fox
           POSTGRES_DB: fox_test
         options: >-
-          --health-cmd "pg_isready -U fox"
+          --health-cmd "pg_isready -U fox -d fox_test"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10

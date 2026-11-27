@@ -5,9 +5,9 @@ Requires DATABASE_URL. Does not fall back to memory.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import os
-from contextlib import contextmanager
 from app.security.ownership import TaskOwnershipRecord, TaskOwnershipStore
 
 

@@ -377,11 +377,13 @@ class TestMemoryState(unittest.TestCase):
             "task-1",
             state=const.TASK_STATE_COMPLETE,
             progress=100,
+            generation=1,
             videos=["final.mp4"],
         )
 
         patched = state.patch_task(
             "task-1",
+            generation=1,
             cross_post_state=const.CROSS_POST_STATE_COMPLETE,
             cross_post_results=[{"success": True}],
         )
@@ -393,12 +395,15 @@ class TestMemoryState(unittest.TestCase):
                 "task_id": "task-1",
                 "state": const.TASK_STATE_COMPLETE,
                 "progress": 100,
+                "generation": 1,
                 "videos": ["final.mp4"],
                 "cross_post_state": const.CROSS_POST_STATE_COMPLETE,
                 "cross_post_results": [{"success": True}],
             },
         )
-        self.assertFalse(state.patch_task("missing", value="ignored"))
+        self.assertFalse(state.patch_task("missing", generation=1, value="ignored"))
+        self.assertFalse(state.patch_task("task-1", generation=2, value="stale"))
+        self.assertFalse(state.patch_task("task-1", value="unfenced"))
 
 
 class TestRedisState(unittest.TestCase):

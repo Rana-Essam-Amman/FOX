@@ -10,6 +10,18 @@ class _FencedFakeRedis(_FakeRedis):
         if isinstance(key, str):
             key = key.encode("utf-8")
         target = self.data.get(key)
+        if "EXISTS" in script:
+            if target is not None:
+                return 0
+            target = {}
+            for index in range(0, len(arguments), 2):
+                if index + 1 >= len(arguments):
+                    return 0
+                field = str(arguments[index]).encode("utf-8")
+                value = str(arguments[index + 1]).encode("utf-8")
+                target[field] = value
+            self.data[key] = target
+            return 1
         if target is None or target.get(b"task_id") != key:
             return 0
         if "next_gen" in script:

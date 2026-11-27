@@ -269,7 +269,7 @@ class TestVideoControllerTasks(unittest.TestCase):
             ):
                 body = TaskVideoRequest(video_subject="Coffee", font_name="linked.ttf")
                 with self.assertRaises(HttpException) as raised:
-                    video_controller.create_task(self._request(), body, stop_at="video")
+                    video_controller.create_task(self._request(), body, stop_at="video", user=self._authed_user())
 
             self.assertEqual(raised.exception.status_code, 403)
             update_task.assert_not_called()
@@ -482,7 +482,8 @@ class TestVideoControllerTasks(unittest.TestCase):
                 subtitle_path=subtitle_path,
                 cross_post_owner="localhost:123:internal",
             )
-            with patch.dict(config.app, {"endpoint": ""}):
+            with (
+                patch.dict(config.app, {"endpoint": ""}),
                 patch.object(
                     video_controller,
                     "ownership_store",
@@ -517,10 +518,17 @@ class TestVideoControllerTasks(unittest.TestCase):
             "error": "TTS request timed out",
         }
 
-        with patch.object(
-            video_controller.sm.state,
-            "get_task",
-            return_value=failed_task,
+        with (
+            patch.object(
+                video_controller.sm.state,
+                "get_task",
+                return_value=failed_task,
+            ),
+            patch.object(
+                video_controller,
+                "ownership_store",
+                self._ownership_store_for("failed-task"),
+            ),
         ):
             response = video_controller.get_task(
                 self._request(), task_id="failed-task", query=MagicMock(),
@@ -579,7 +587,7 @@ class TestVideoControllerTasks(unittest.TestCase):
                     "get_task",
                     return_value=task,
                 ),
-                patch.object(video_controller.sm.state, "delete_task") as delete_task,
+                patch.object(video_controller.sm.state, "authorized_delete") as delete_task,
                 patch.object(
                     video_controller,
                     "ownership_store",

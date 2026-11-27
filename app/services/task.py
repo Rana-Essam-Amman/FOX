@@ -48,7 +48,7 @@ from app.services.terminal_guard import complete_if_owner as _complete_if_owner_
 from app.utils import file_security, utils
 from app.utils.subtitle_writer import staged_subtitle_file
 
-from app.services.fencing import acquire_generation, artifact_path_for_generation as _artifact_path_for_generation, cleanup_generation_artifacts as _cleanup_generation_artifacts
+from app.services.fencing import artifact_path_for_generation as _artifact_path_for_generation, cleanup_generation_artifacts as _cleanup_generation_artifacts
 
 def _complete_if_owner(task_id: str, **kwargs) -> bool:
     """Mark COMPLETE only if we still own the lease and generation.

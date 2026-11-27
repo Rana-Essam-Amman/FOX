@@ -11,7 +11,13 @@ def test_supplied_empty_search_terms_fail_before_reranking(terms):
     with (patch.object(tm.sm, "state", state),
           patch.object(tm.llm, "generate_terms") as generate,
           patch.object(tm.twelvelabs, "rerank_terms_by_subject") as rerank):
-        result = tm.generate_terms("task-1", params, "Coffee script")
+        state.create_task("task-1")
+        generation = state.acquire_generation("task-1")
+        token = tm.current_generation.set(generation)
+        try:
+            result = tm.generate_terms("task-1", params, "Coffee script")
+        finally:
+            tm.current_generation.reset(token)
     assert result is None
     assert state.get_task("task-1")["state"] == tm.const.TASK_STATE_FAILED
     generate.assert_not_called()

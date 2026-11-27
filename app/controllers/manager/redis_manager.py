@@ -339,7 +339,34 @@ class RedisTaskManager(TaskManager):
                 except Exception as rec_exc:
                     logger.error(f"ownership-store-error recovery raised for {task_id}: {rec_exc}")
                 return
-            func(*args, **kwargs)
+            try:
+                func(*args, **kwargs)
+            except tm.GenerationAcquisitionError as exc:
+                # start() deliberately raises before entering its pipeline when
+                # no fencing generation can be acquired. Without this boundary
+                # recovery, the already-created API task remains PROCESSING
+                # forever even though its reserved worker slot is released.
+                logger.exception(
+                    f"worker could not acquire task generation, "
+                    f"task_id={task_id}, error={exc}"
+                )
+                try:
+                    recovered = sm.state.recovery_patch(
+                        task_id,
+                        expected_generation=None,
+                        state=const.TASK_STATE_FAILED,
+                        failed_stage="generation_acquisition",
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
+                    if not recovered:
+                        logger.error(
+                            f"generation acquisition recovery rejected for {task_id}"
+                        )
+                except Exception as recovery_exc:
+                    logger.error(
+                        f"generation acquisition recovery failed for {task_id}: "
+                        f"{recovery_exc}"
+                    )
         finally:
             stop_heartbeat.set()
             if not handoff.ready.is_set():

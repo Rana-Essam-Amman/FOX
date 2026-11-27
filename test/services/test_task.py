@@ -2508,8 +2508,9 @@ class TestTaskService(unittest.TestCase):
                 tm.const.CROSS_POST_STATE_COMPLETE,
             ),
         ):
-            state.update_task(
+            state.create_task(
                 task_id,
+                generation=1,
                 state=tm.const.TASK_STATE_COMPLETE,
                 progress=100,
                 videos=["final.mp4"],
@@ -2535,7 +2536,7 @@ class TestTaskService(unittest.TestCase):
             )
         finally:
             for task_id in task_ids:
-                state.delete_task(task_id)
+                state.authorized_delete(task_id)
 
     def test_cross_post_future_exception_is_observed(self):
         """线程池自身抛出的异常必须进入日志，不能留在无人读取的 Future 中。"""

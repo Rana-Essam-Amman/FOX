@@ -372,27 +372,38 @@ class TestVideoControllerTasks(unittest.TestCase):
         self.assertIsNone(state.get_task("task-123"))
 
     def test_get_all_tasks_preserves_pagination(self):
-        """任务列表响应必须包含状态层返回的总数和请求分页参数。"""
-        store = self._ownership_store_for("task-1")
+        """Ownership filtering occurs before pagination; total counts only owned tasks."""
+        # 12 tasks owned by test-user, 3 owned by other-user.
+        owned_ids = [f"owned-{i}" for i in range(12)]
+        other_ids = [f"other-{i}" for i in range(3)]
+        all_tasks = [{"task_id": tid} for tid in owned_ids + other_ids]
+        store = self._ownership_store_for(*owned_ids)
         with patch.object(
             video_controller.sm.state,
             "get_all_tasks",
-            return_value=([{"task_id": "task-1", "cross_post_owner": "internal"}], 21),
+            return_value=(all_tasks, len(all_tasks)),
         ) as get_all, patch.object(video_controller, "ownership_store", store):
-            response = video_controller.get_all_tasks(
+            page1 = video_controller.get_all_tasks(
                 self._request(), page=1, page_size=10, user=self._authed_user()
             )
+            page2 = video_controller.get_all_tasks(
+                self._request(), page=2, page_size=10, user=self._authed_user()
+            )
 
-        self.assertEqual(
-            response["data"],
-            {
-                "tasks": [{"task_id": "task-1"}],
-                "total": 1,
-                "page": 1,
-                "page_size": 10,
-            },
-        )
-        get_all.assert_called_once_with(1, 10000)
+        # Bounded scan is used.
+        get_all.assert_called_with(1, 10000)
+        # Total is owned count only.
+        self.assertEqual(page1["data"]["total"], 12)
+        self.assertEqual(page2["data"]["total"], 12)
+        # Page boundaries.
+        self.assertEqual(len(page1["data"]["tasks"]), 10)
+        self.assertEqual(len(page2["data"]["tasks"]), 2)
+        self.assertEqual(page1["data"]["page"], 1)
+        self.assertEqual(page2["data"]["page"], 2)
+        # Only owned tasks appear; order preserved.
+        returned_ids = [t["task_id"] for t in page1["data"]["tasks"] + page2["data"]["tasks"]]
+        self.assertEqual(returned_ids, owned_ids)
+        self.assertTrue(all(tid.startswith("owned-") for tid in returned_ids))
 
     def test_task_list_returns_download_urls_without_mutating_state(self):
         """List and detail endpoints must expose the same usable video URLs."""

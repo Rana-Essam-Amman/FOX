@@ -1,6 +1,7 @@
 """PostgreSQL adapters must close every connection on success and failure."""
 
 from datetime import datetime, timezone
+
 import pytest
 
 from app.models.exception import HttpException

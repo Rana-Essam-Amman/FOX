@@ -191,13 +191,14 @@ class TestPartialBatchResults(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             state = RecoveringState()
-            result, checkpoints = self._run_batch(directory, state)
-            self.assertEqual(len(checkpoints), 1)
+            result, checkpoints = self._run_batch(directory, state, fail_at=2)
+            self.assertEqual(len(checkpoints), 2)
+            self.assertEqual(state.failed_writes, 2)
             self.assertEqual(result["videos"], [
-                os.path.join(directory, "partial-batch", "final-1.mp4"),
+                os.path.join(directory, "partial-batch", "final-1.gen1.mp4"),
             ])
             self.assertEqual(result["state"], tm.const.TASK_STATE_FAILED)
-            self.assertEqual(result["error"], "OSError: state temporarily unavailable")
+            self.assertEqual(result["error"], "OSError: simulated render failure")
             self.assertEqual(result, state.get_task("partial-batch"))
 
 

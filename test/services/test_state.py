@@ -284,7 +284,7 @@ class TestMemoryState(unittest.TestCase):
         self.assertEqual(state.get_task("bool")["state"], const.TASK_STATE_PROCESSING)
 
         # Malformed stored generation fails closed.
-        state.update_task("malformed", state=const.TASK_STATE_PROCESSING, generation="invalid")
+        state.create_task("malformed", state=const.TASK_STATE_PROCESSING, generation="invalid")
         self.assertFalse(
             state.recovery_patch("malformed", expected_generation=1, state=-1, error="no")
         )

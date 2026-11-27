@@ -459,6 +459,7 @@ class TestTaskService(unittest.TestCase):
         """完整视频流水线必须在 LLM/TTS/素材服务之前先确认 FFmpeg 可用。"""
         params = VideoParams(video_subject="test")
         state = MemoryState()
+        state.create_task("ffmpeg-missing")
         with (
             patch.object(tm.utils, "check_ffmpeg_ready", return_value=False),
             patch.object(tm, "generate_script") as generate_script,
@@ -479,6 +480,7 @@ class TestTaskService(unittest.TestCase):
         """脚本阶段不涉及音频/视频合成，不应因为缺少 FFmpeg 而被拒绝。"""
         params = VideoParams(video_subject="test")
         state = MemoryState()
+        state.create_task("ffmpeg-missing-script-stage")
         with (
             patch.object(tm.utils, "check_ffmpeg_ready", return_value=False) as check,
             patch.object(tm, "generate_script", return_value="脚本") as generate_script,
@@ -500,6 +502,7 @@ class TestTaskService(unittest.TestCase):
             with self.subTest(script=script):
                 task_id = f"literal-error-script-{index}"
                 state = MemoryState()
+                state.create_task(task_id)
                 params = VideoParams(video_subject="debugging", video_script=script)
                 with patch.object(tm.sm, "state", state):
                     result = tm.start(task_id, params, stop_at="script")
@@ -512,6 +515,7 @@ class TestTaskService(unittest.TestCase):
     def test_generated_script_still_rejects_provider_error_prefix(self):
         """The provider's error sentinel must still stop generated scripts."""
         state = MemoryState()
+        state.create_task("generated-script-error")
         params = VideoParams(video_subject="debugging")
         with (
             patch.object(tm, "generate_script", return_value="Error: invalid API key"),
@@ -527,6 +531,7 @@ class TestTaskService(unittest.TestCase):
         """搜索词阶段同样不需要 FFmpeg，不应触发探测。"""
         params = VideoParams(video_subject="test")
         state = MemoryState()
+        state.create_task("ffmpeg-missing-terms-stage")
         with (
             patch.object(tm.utils, "check_ffmpeg_ready", return_value=False) as check,
             patch.object(tm, "generate_script", return_value="脚本"),
@@ -543,6 +548,7 @@ class TestTaskService(unittest.TestCase):
         """FFmpeg 可用时探测不应阻塞后续脚本生成。"""
         params = VideoParams(video_subject="test")
         state = MemoryState()
+        state.create_task("ffmpeg-ready")
         with (
             patch.object(tm.utils, "check_ffmpeg_ready", return_value=True) as check,
             patch.object(tm, "generate_script", return_value="脚本") as generate_script,
@@ -560,6 +566,7 @@ class TestTaskService(unittest.TestCase):
         """完整任务缺少 Sonilo Key 时不能先调用 LLM、TTS 或素材服务。"""
         params = VideoParams(video_subject="test", bgm_type="sonilo")
         state = MemoryState()
+        state.create_task("missing-sonilo-key")
         with (
             patch.object(tm.sonilo, "is_enabled", return_value=False),
             patch.object(tm, "generate_script") as generate_script,
@@ -586,6 +593,7 @@ class TestTaskService(unittest.TestCase):
             bgm_volume=0.0,
         )
         state = MemoryState()
+        state.create_task("zero-volume-without-key")
         with (
             patch.object(tm.sonilo, "is_enabled", return_value=False),
             patch.object(tm, "generate_script", return_value="") as generate_script,
@@ -805,6 +813,7 @@ class TestTaskService(unittest.TestCase):
         """完整任务缺少 ElevenLabs Key 时必须在任何付费步骤前失败。"""
         params = VideoParams(video_subject="test", bgm_type="elevenlabs")
         state = MemoryState()
+        state.create_task("missing-elevenlabs-key")
         with (
             patch.object(tm.elevenlabs_music, "is_enabled", return_value=False),
             patch.object(tm, "generate_script") as generate_script,
@@ -823,6 +832,7 @@ class TestTaskService(unittest.TestCase):
         """已确认的免费套餐不能先消耗 LLM、TTS 或素材服务额度。"""
         params = VideoParams(video_subject="test", bgm_type="elevenlabs")
         state = MemoryState()
+        state.create_task("free-elevenlabs-plan")
         with (
             patch.object(tm.elevenlabs_music, "is_enabled", return_value=True),
             patch.object(
@@ -854,6 +864,7 @@ class TestTaskService(unittest.TestCase):
             video_music_prompt="x" * 1001,
         )
         state = MemoryState()
+        state.create_task("oversized-elevenlabs-prompt")
         with (
             patch.object(tm.elevenlabs_music, "is_enabled", return_value=True),
             patch.object(
@@ -905,6 +916,7 @@ class TestTaskService(unittest.TestCase):
             video_script="A short startup story.",
         )
         state = MemoryState()
+        state.create_task("term-provider-error")
 
         with (
             patch.object(
@@ -1452,6 +1464,7 @@ class TestTaskService(unittest.TestCase):
 
     def test_start_forwards_trusted_server_file_flag_to_audio_stage(self):
         params = VideoParams(video_subject="CLI custom audio")
+        tm.sm.state.create_task("trusted-cli-audio")
 
         with (
             patch.object(tm.utils, "check_ffmpeg_ready", return_value=True),
@@ -1488,6 +1501,7 @@ class TestTaskService(unittest.TestCase):
         """
         params = VideoParams(video_subject="Coffee")
         params.video_concat_mode = "sequential"
+        tm.sm.state.create_task("complete-video")
 
         with (
             patch.object(tm, "generate_script", return_value="generated script"),
@@ -1555,6 +1569,7 @@ class TestTaskService(unittest.TestCase):
                 audio_result, materials_result, videos_result = failure_results
                 params = VideoParams(video_subject="Coffee")
                 state = MemoryState()
+                state.create_task(f"failed-{stage}")
                 with (
                     patch.object(
                         tm, "generate_script", return_value="generated script"
@@ -1587,6 +1602,7 @@ class TestTaskService(unittest.TestCase):
         """未预期异常也必须结束任务，并向 API 暴露原始异常类型和信息。"""
         params = VideoParams(video_subject="Coffee")
         state = MemoryState()
+        state.create_task("unexpected-failure")
 
         with (
             patch.object(
@@ -2653,6 +2669,7 @@ class TestTaskService(unittest.TestCase):
             n_threads=2,
             paragraph_number=1,
         )
+        tm.sm.state.create_task(task_id)
         result = tm.start(task_id=task_id, params=params)
         self.assertTrue(result.get("videos"))
 

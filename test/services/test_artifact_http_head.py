@@ -9,12 +9,14 @@ from app.config import config
 from app.controllers.v1 import video as controller
 from app.security import jwt_auth
 from test.services._oidc_test_authority import authed_client, shared_authority
+from test.services._ownership_isolation import isolate_ownership
 
 
 @pytest.fixture(autouse=True)
 def _oidc_verifier(monkeypatch):
     # Real RS256/JWKS verification for every request in this module; restored after each test.
     monkeypatch.setattr(jwt_auth, "jwt_verifier", shared_authority().verifier())
+    isolate_ownership(monkeypatch, owned=[("task", "user-a")])
 
 
 @pytest.fixture

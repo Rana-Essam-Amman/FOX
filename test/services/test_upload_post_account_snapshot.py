@@ -92,7 +92,11 @@ class TestUploadPostAccountSnapshot(unittest.TestCase):
     def test_background_status_keeps_account_that_accepted_the_video(self):
         state = sm.MemoryState()
         task_id = "account-background"
-        state.update_task(task_id, cross_post_state=const.CROSS_POST_STATE_PENDING)
+        state.create_task(
+            task_id,
+            generation=1,
+            cross_post_state=const.CROSS_POST_STATE_PENDING,
+        )
         account_a = {
             "upload_post_enabled": True,
             "upload_post_api_key": "account-a-test-key",

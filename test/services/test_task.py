@@ -134,16 +134,16 @@ class TestTaskService(unittest.TestCase):
         with (
             patch.object(tm.video, "combine_videos") as combine_videos,
             patch.object(tm.video, "generate_video"),
-            patch.object(tm.sm.state, "update_task"),
         ):
-            tm.generate_final_videos(
-                task_id="clip-speed-task",
-                params=params,
-                downloaded_videos=["material.mp4"],
-                audio_file="audio.mp3",
-                subtitle_path="",
-                audio_duration=5,
-            )
+            with self._worker_generation():
+                tm.generate_final_videos(
+                    task_id="clip-speed-task",
+                    params=params,
+                    downloaded_videos=["material.mp4"],
+                    audio_file="audio.mp3",
+                    subtitle_path="",
+                    audio_duration=5,
+                )
 
         self.assertEqual(combine_videos.call_args.kwargs["clip_speed"], 1.25)
         self.assertEqual(
@@ -256,14 +256,15 @@ class TestTaskService(unittest.TestCase):
                     patch.object(tm.video, "generate_video"),
                     patch.object(tm.task_artifacts, "patch_script_data"),
                 ):
-                    tm.generate_final_videos(
-                        task_id="combine-progress",
-                        params=params,
-                        downloaded_videos=["material.mp4"],
-                        audio_file="audio.mp3",
-                        subtitle_path="",
-                        audio_duration=5,
-                    )
+                    with self._worker_generation():
+                        tm.generate_final_videos(
+                            task_id="combine-progress",
+                            params=params,
+                            downloaded_videos=["material.mp4"],
+                            audio_file="audio.mp3",
+                            subtitle_path="",
+                            audio_duration=5,
+                        )
 
                 self.assertEqual(observed, expected)
                 self.assertEqual(
@@ -287,16 +288,16 @@ class TestTaskService(unittest.TestCase):
                 side_effect=lambda **kwargs: kwargs["output_path"],
             ) as generate_bgm,
             patch.object(tm.video, "generate_video") as generate_video,
-            patch.object(tm.sm.state, "update_task"),
         ):
-            _, _, warnings = tm.generate_final_videos(
-                task_id="sonilo-task",
-                params=params,
-                downloaded_videos=["material.mp4"],
-                audio_file="audio.mp3",
-                subtitle_path="",
-                audio_duration=5,
-            )
+            with self._worker_generation():
+                _, _, warnings = tm.generate_final_videos(
+                    task_id="sonilo-task",
+                    params=params,
+                    downloaded_videos=["material.mp4"],
+                    audio_file="audio.mp3",
+                    subtitle_path="",
+                    audio_duration=5,
+                )
 
         self.assertEqual(warnings, [])
         self.assertEqual(generate_bgm.call_args.kwargs["video_duration"], 5)
@@ -324,16 +325,16 @@ class TestTaskService(unittest.TestCase):
                 side_effect=lambda **kwargs: kwargs["output_path"],
             ) as generate_bgm,
             patch.object(tm.video, "generate_video") as generate_video,
-            patch.object(tm.sm.state, "update_task"),
         ):
-            _, _, warnings = tm.generate_final_videos(
-                task_id="elevenlabs-task",
-                params=params,
-                downloaded_videos=["material.mp4"],
-                audio_file="audio.mp3",
-                subtitle_path="",
-                audio_duration=5,
-            )
+            with self._worker_generation():
+                _, _, warnings = tm.generate_final_videos(
+                    task_id="elevenlabs-task",
+                    params=params,
+                    downloaded_videos=["material.mp4"],
+                    audio_file="audio.mp3",
+                    subtitle_path="",
+                    audio_duration=5,
+                )
 
         self.assertEqual(warnings, [])
         self.assertEqual(generate_bgm.call_args.kwargs["video_duration"], 5)
@@ -358,16 +359,16 @@ class TestTaskService(unittest.TestCase):
                 ),
             ),
             patch.object(tm.video, "generate_video") as generate_video,
-            patch.object(tm.sm.state, "update_task"),
         ):
-            final_paths, _, warnings = tm.generate_final_videos(
-                task_id="elevenlabs-fallback",
-                params=params,
-                downloaded_videos=["material.mp4"],
-                audio_file="audio.mp3",
-                subtitle_path="",
-                audio_duration=5,
-            )
+            with self._worker_generation():
+                final_paths, _, warnings = tm.generate_final_videos(
+                    task_id="elevenlabs-fallback",
+                    params=params,
+                    downloaded_videos=["material.mp4"],
+                    audio_file="audio.mp3",
+                    subtitle_path="",
+                    audio_duration=5,
+                )
 
         self.assertEqual(len(final_paths), 1)
         self.assertEqual(
@@ -388,16 +389,16 @@ class TestTaskService(unittest.TestCase):
                 side_effect=tm.sonilo.SoniloError("temporary outage"),
             ),
             patch.object(tm.video, "generate_video") as generate_video,
-            patch.object(tm.sm.state, "update_task"),
         ):
-            final_paths, _, warnings = tm.generate_final_videos(
-                task_id="sonilo-fallback",
-                params=params,
-                downloaded_videos=["material.mp4"],
-                audio_file="audio.mp3",
-                subtitle_path="",
-                audio_duration=5,
-            )
+            with self._worker_generation():
+                final_paths, _, warnings = tm.generate_final_videos(
+                    task_id="sonilo-fallback",
+                    params=params,
+                    downloaded_videos=["material.mp4"],
+                    audio_file="audio.mp3",
+                    subtitle_path="",
+                    audio_duration=5,
+                )
 
         self.assertEqual(len(final_paths), 1)
         self.assertEqual(warnings, [{"code": "sonilo_bgm_failed", "video_index": 1}])
@@ -416,16 +417,16 @@ class TestTaskService(unittest.TestCase):
             patch.object(tm.video, "combine_videos"),
             patch.object(tm.sonilo, "generate_bgm") as generate_bgm,
             patch.object(tm.video, "generate_video", return_value=True) as generate,
-            patch.object(tm.sm.state, "update_task"),
         ):
-            final_paths, _, warnings = tm.generate_final_videos(
-                task_id="sonilo-zero-volume",
-                params=params,
-                downloaded_videos=["material.mp4"],
-                audio_file="audio.mp3",
-                subtitle_path="",
-                audio_duration=5,
-            )
+            with self._worker_generation():
+                final_paths, _, warnings = tm.generate_final_videos(
+                    task_id="sonilo-zero-volume",
+                    params=params,
+                    downloaded_videos=["material.mp4"],
+                    audio_file="audio.mp3",
+                    subtitle_path="",
+                    audio_duration=5,
+                )
 
         self.assertEqual(len(final_paths), 1)
         self.assertEqual(warnings, [])
@@ -444,16 +445,16 @@ class TestTaskService(unittest.TestCase):
                 side_effect=lambda **kwargs: kwargs["output_path"],
             ),
             patch.object(tm.video, "generate_video", return_value=False) as generate,
-            patch.object(tm.sm.state, "update_task"),
         ):
-            final_paths, _, warnings = tm.generate_final_videos(
-                task_id="sonilo-mix-fallback",
-                params=params,
-                downloaded_videos=["material.mp4"],
-                audio_file="audio.mp3",
-                subtitle_path="",
-                audio_duration=5,
-            )
+            with self._worker_generation():
+                final_paths, _, warnings = tm.generate_final_videos(
+                    task_id="sonilo-mix-fallback",
+                    params=params,
+                    downloaded_videos=["material.mp4"],
+                    audio_file="audio.mp3",
+                    subtitle_path="",
+                    audio_duration=5,
+                )
 
         self.assertEqual(len(final_paths), 1)
         self.assertEqual(warnings, [{"code": "sonilo_bgm_failed", "video_index": 1}])
@@ -1458,7 +1459,6 @@ class TestTaskService(unittest.TestCase):
                         return_value=["clip.mp4"],
                     ),
                     patch.object(tm, "generate_final_videos") as generate_final,
-                    patch.object(tm.sm.state, "update_task"),
                 ):
                     result = tm.start(
                         f"intermediate-{stop_at}", params, stop_at=stop_at
@@ -1481,7 +1481,6 @@ class TestTaskService(unittest.TestCase):
                 "generate_audio",
                 return_value=("audio.mp3", 5, None),
             ) as generate_audio,
-            patch.object(tm.sm.state, "update_task"),
         ):
             result = tm.start(
                 "trusted-cli-audio",

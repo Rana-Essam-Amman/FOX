@@ -349,7 +349,7 @@ class TestVideoControllerTasks(unittest.TestCase):
             patch("app.security.rate_limit.rate_limiter.check_generation"),
         ):
             with self.assertRaises(HttpException) as raised:
-                video_controller.create_task(self._request(), body, stop_at="video")
+                video_controller.create_task(self._request(), body, stop_at="video", user=self._authed_user())
 
         self.assertEqual(raised.exception.status_code, 429)
         delete_task.assert_called_once_with("queue-full-task")
@@ -490,6 +490,10 @@ class TestVideoControllerTasks(unittest.TestCase):
                     "ownership_store",
                     self._ownership_store_for(task_id),
                 ),
+                patch(
+                    "app.security.ownership.ownership_store",
+                    self._ownership_store_for(task_id),
+                ),
             ):
                 response = video_controller.get_task(
                     self._request(), task_id=task_id, query=MagicMock(),
@@ -528,6 +532,10 @@ class TestVideoControllerTasks(unittest.TestCase):
             patch.object(
                 video_controller,
                 "ownership_store",
+                self._ownership_store_for("failed-task"),
+            ),
+            patch(
+                "app.security.ownership.ownership_store",
                 self._ownership_store_for("failed-task"),
             ),
         ):
@@ -592,6 +600,10 @@ class TestVideoControllerTasks(unittest.TestCase):
                 patch.object(
                     video_controller,
                     "ownership_store",
+                    self._ownership_store_for(*(item["task_id"] for item in busy_tasks)),
+                ),
+                patch(
+                    "app.security.ownership.ownership_store",
                     self._ownership_store_for(*(item["task_id"] for item in busy_tasks)),
                 ),
             ):
@@ -936,6 +948,10 @@ class TestVideoControllerFiles(unittest.TestCase):
                     "ownership_store",
                     self._owned_store("clip.mp4"),
                 ),
+                patch(
+                    "app.security.ownership.ownership_store",
+                    self._owned_store("clip.mp4"),
+                ),
             ):
                 response = asyncio.run(
                     video_controller.stream_video(
@@ -988,11 +1004,15 @@ class TestVideoControllerFiles(unittest.TestCase):
                     "ownership_store",
                     self._owned_store("final-1.mp4"),
                 ),
+                patch(
+                    "app.security.ownership.ownership_store",
+                    self._owned_store("final-1.mp4"),
+                ),
             ):
                 response = asyncio.run(
                     video_controller.download_video(
                         self._request(), "final-1.mp4",
-                        user=__import__("app.security.jwt_auth", fromlist=["AuthenticatedUser"]).AuthenticatedUser(sub="test-user"),
+                        user=AuthenticatedUser(sub="test-user"),
                     )
                 )
 
@@ -1033,6 +1053,10 @@ class TestVideoControllerFiles(unittest.TestCase):
                 patch.object(
                     video_controller,
                     "ownership_store",
+                    self._owned_store(*(filename for filename, _ in cases)),
+                ),
+                patch(
+                    "app.security.ownership.ownership_store",
                     self._owned_store(*(filename for filename, _ in cases)),
                 ),
             ):

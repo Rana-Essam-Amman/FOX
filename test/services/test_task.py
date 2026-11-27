@@ -26,6 +26,31 @@ RUN_INTEGRATION_TESTS = os.environ.get("MPT_RUN_INTEGRATION_TESTS", "").lower() 
 
 class TestTaskService(unittest.TestCase):
     def setUp(self):
+        # Service-level tests that call worker helpers directly must model the
+        # generation acquired by the production worker entry point.
+        self._generation_token = tm.current_generation.set(1)
+        self._original_memory_update = MemoryState.update_task
+
+        def create_generation_owned_task(state, task_id, *args, **kwargs):
+            if state.get_task(task_id) is None:
+                # Initial task creation happens before worker ownership exists.
+                # Seed generation 1 atomically in the test store, then keep all
+                # subsequent mutations fenced by the worker context above.
+                supplied_generation = kwargs.pop("generation", 1)
+                token = tm.current_generation.set(None)
+                try:
+                    return self._original_memory_update(
+                        state, task_id, *args,
+                        generation=supplied_generation, **kwargs
+                    )
+                finally:
+                    tm.current_generation.reset(token)
+            return self._original_memory_update(state, task_id, *args, **kwargs)
+
+        self._memory_update_patch = patch.object(
+            MemoryState, "update_task", create_generation_owned_task
+        )
+        self._memory_update_patch.start()
         # 发布 Future 注册表是进程级状态。测试间清理可以避免某个模拟 Future
         # 影响后续恢复测试，同时不会触碰真正线程池中的生产任务。
         with tm._cross_post_registry_lock:
@@ -34,6 +59,8 @@ class TestTaskService(unittest.TestCase):
     def tearDown(self):
         with tm._cross_post_registry_lock:
             tm._cross_post_futures.clear()
+        self._memory_update_patch.stop()
+        tm.current_generation.reset(self._generation_token)
 
     def test_is_task_busy_covers_generation_and_cross_posting(self):
         """删除入口必须同时识别视频生成和跨平台发布的活跃状态。"""

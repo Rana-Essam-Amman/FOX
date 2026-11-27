@@ -8,7 +8,6 @@ from contextvars import ContextVar
 
 from loguru import logger
 
-from app.services import state as sm
 
 
 _current = ContextVar("generation_progress", default=None)

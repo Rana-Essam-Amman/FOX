@@ -38,7 +38,9 @@ if tid ~= ARGV[1] then
     return 0
 end
 local gen = redis.call('HGET', key, 'generation')
-if gen and gen ~= '' and gen ~= '0' then
+-- No-generation recovery is only for records where the field is truly absent.
+-- Empty or zero-valued generations are malformed/invalid, not "never started".
+if gen then
     return 0
 end
 for i = 2, #ARGV, 2 do
@@ -458,18 +460,26 @@ class RedisState(BaseState):
             return False
         from app.services.fencing import compare_and_write
         try:
-            if expected_generation is not None and expected_generation >= 1:
-                return bool(compare_and_write(
-                    self._redis, task_id, expected_generation, kwargs
+            if expected_generation is None:
+                # Atomic recovery is permitted only for never-started records.
+                # The Lua script requires the generation field to be absent.
+                args = [task_id]
+                for k, v in kwargs.items():
+                    args.append(k)
+                    args.append(self._serialize_field(k, v))
+                return bool(self._redis.eval(
+                    _ATOMIC_NO_GEN_RECOVERY_SCRIPT, 1, task_id, *args
                 ))
-            # Atomic no-generation recovery: Lua verifies key, task_id, and
-            # that generation is still absent, then writes. No TOCTOU window.
-            args = [task_id]
-            for k, v in kwargs.items():
-                args.append(k)
-                args.append(self._serialize_field(k, v))
-            return bool(self._redis.eval(
-                _ATOMIC_NO_GEN_RECOVERY_SCRIPT, 1, task_id, *args
+            # An explicitly supplied generation must be a positive integer.
+            # Do not let 0/False/negative values fall through to no-gen recovery.
+            if (
+                isinstance(expected_generation, bool)
+                or not isinstance(expected_generation, int)
+                or expected_generation < 1
+            ):
+                return False
+            return bool(compare_and_write(
+                self._redis, task_id, expected_generation, kwargs
             ))
         except Exception:
             return False

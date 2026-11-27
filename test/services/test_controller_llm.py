@@ -69,7 +69,11 @@ class TestLlmController(unittest.TestCase):
             "generate_terms",
             return_value=["beans", "brewing"],
         ) as generate:
-            response = llm_controller.generate_video_terms(None, body)
+            response = llm_controller.generate_video_terms(
+                SimpleNamespace(headers={'x-task-id': 'req-2'}),
+                body,
+                user=SimpleNamespace(sub='test-user'),
+            )
 
         self.assertEqual(
             response,
@@ -101,7 +105,11 @@ class TestLlmController(unittest.TestCase):
             "generate_social_metadata",
             return_value=metadata,
         ) as generate:
-            response = llm_controller.generate_video_social_metadata(None, body)
+            response = llm_controller.generate_video_social_metadata(
+                SimpleNamespace(headers={'x-task-id': 'req-3'}),
+                body,
+                user=SimpleNamespace(sub='test-user'),
+            )
 
         self.assertEqual(response, {"status": 200, "data": metadata})
         generate.assert_called_once_with(

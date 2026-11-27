@@ -11,7 +11,10 @@ def _set_required_production_environment(monkeypatch):
     monkeypatch.setenv("FOX_ENV", "production")
     monkeypatch.setenv("FOX_OIDC_ISSUER", "https://issuer.example")
     monkeypatch.setenv("FOX_OIDC_AUDIENCE", "fox-api")
-    monkeypatch.setenv("FOX_OIDC_JWKS_URL", "https://issuer.example/.well-known/jwks.json")
+    monkeypatch.setenv(
+        "FOX_OIDC_JWKS_URL",
+        "https://issuer.example/.well-known/jwks.json",
+    )
     monkeypatch.setenv("DATABASE_URL", "postgresql://fox:secret@localhost/fox")
     monkeypatch.setenv("SUPABASE_URL", "https://project.supabase.co")
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "test-only")

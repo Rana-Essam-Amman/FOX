@@ -1291,6 +1291,7 @@ class TestTaskService(unittest.TestCase):
         Whisper 可以直接从音频文件转写，此时不能被 sub_maker 为空的保护逻辑提前跳过。
         """
         task_id = "test-custom-audio-whisper-subtitle"
+        tm.sm.state.create_task(task_id, generation=1)
         task_dir = utils.task_dir(task_id)
         audio_file = os.path.join(task_dir, "custom-audio.mp3")
         Path(audio_file).write_bytes(b"fake audio")
@@ -1352,6 +1353,7 @@ class TestTaskService(unittest.TestCase):
         逐词显示，最终视频却仍会按句显示。
         """
         task_id = "test-custom-audio-whisper-word-subtitle"
+        tm.sm.state.create_task(task_id, generation=1)
         task_dir = utils.task_dir(task_id)
         audio_file = os.path.join(task_dir, "custom-audio.mp3")
         Path(audio_file).write_bytes(b"fake audio")
@@ -1614,6 +1616,7 @@ class TestTaskService(unittest.TestCase):
         cross_post.assert_not_called()
         update_task.assert_called_with(
             "complete-video",
+            generation=1,
             state=tm.const.TASK_STATE_COMPLETE,
             progress=100,
             **result,

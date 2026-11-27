@@ -26,6 +26,7 @@ from app.models.schema import (
 )
 from app.services import material_upload
 from app.services import state as sm
+from app.security.jwt_auth import AuthenticatedUser
 from app.utils import utils
 
 
@@ -782,17 +783,18 @@ class TestVideoControllerDeleteHTTP(unittest.TestCase):
 
 class TestVideoControllerFiles(unittest.TestCase):
     @staticmethod
-    def _owned_store(task_id):
+    def _owned_store(*task_ids):
         from datetime import datetime, timezone
         from app.security.ownership import InMemoryOwnershipStore, TaskOwnershipRecord
         store = InMemoryOwnershipStore()
-        store.create(TaskOwnershipRecord(
-            task_id=task_id,
-            owner_id="test-user",
-            created_at=datetime.now(timezone.utc),
-            kind="video",
-            metadata={},
-        ))
+        for task_id in task_ids:
+            store.create(TaskOwnershipRecord(
+                task_id=task_id,
+                owner_id="test-user",
+                created_at=datetime.now(timezone.utc),
+                kind="video",
+                metadata={},
+            ))
         return store
 
     @staticmethod
@@ -927,11 +929,18 @@ class TestVideoControllerFiles(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             Path(temp_dir, "clip.mp4").write_bytes(b"0123456789")
-            with patch.object(video_controller.utils, "task_dir", return_value=temp_dir):
+            with (
+                patch.object(video_controller.utils, "task_dir", return_value=temp_dir),
+                patch.object(
+                    video_controller,
+                    "ownership_store",
+                    self._owned_store("clip.mp4"),
+                ),
+            ):
                 response = asyncio.run(
                     video_controller.stream_video(
                         self._request("bytes=2-5"), "clip.mp4",
-                        user=__import__("app.security.jwt_auth", fromlist=["AuthenticatedUser"]).AuthenticatedUser(sub="test-user"),
+                        user=AuthenticatedUser(sub="test-user"),
                     )
                 )
                 with patch("builtins.open", side_effect=OSError("file vanished")):
@@ -947,9 +956,19 @@ class TestVideoControllerFiles(unittest.TestCase):
             with (
                 patch.object(video_controller.utils, "task_dir", return_value=temp_dir),
                 patch("builtins.open", side_effect=FileNotFoundError),
+                patch.object(
+                    video_controller,
+                    "ownership_store",
+                    self._owned_store("clip.mp4"),
+                ),
             ):
                 with self.assertRaises(HttpException) as raised:
-                    asyncio.run(video_controller.stream_video(self._request(), "clip.mp4"))
+                    asyncio.run(
+                        video_controller.stream_video(
+                            self._request(), "clip.mp4",
+                            user=AuthenticatedUser(sub="test-user"),
+                        )
+                    )
 
         self.assertEqual(raised.exception.status_code, 404)
 
@@ -958,10 +977,17 @@ class TestVideoControllerFiles(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             video_path = Path(temp_dir, "final-1.mp4")
             video_path.write_bytes(b"video")
-            with patch.object(
-                video_controller.utils,
-                "task_dir",
-                return_value=temp_dir,
+            with (
+                patch.object(
+                    video_controller.utils,
+                    "task_dir",
+                    return_value=temp_dir,
+                ),
+                patch.object(
+                    video_controller,
+                    "ownership_store",
+                    self._owned_store("final-1.mp4"),
+                ),
             ):
                 response = asyncio.run(
                     video_controller.download_video(
@@ -998,16 +1024,26 @@ class TestVideoControllerFiles(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            with patch.object(
-                video_controller.utils,
-                "task_dir",
-                return_value=temp_dir,
+            with (
+                patch.object(
+                    video_controller.utils,
+                    "task_dir",
+                    return_value=temp_dir,
+                ),
+                patch.object(
+                    video_controller,
+                    "ownership_store",
+                    self._owned_store(*(filename for filename, _ in cases)),
+                ),
             ):
                 for filename, expected_header in cases:
                     with self.subTest(filename=filename):
                         Path(temp_dir, filename).write_bytes(b"video")
                         response = asyncio.run(
-                            video_controller.download_video(self._request(), filename)
+                            video_controller.download_video(
+                                self._request(), filename,
+                                user=AuthenticatedUser(sub="test-user"),
+                            )
                         )
 
                         self.assertEqual(

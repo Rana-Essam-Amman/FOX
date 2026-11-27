@@ -6,8 +6,8 @@ from unittest.mock import patch
 import jwt
 import pytest
 
-from app.security.jwt_auth import JWTVerifier, AuthenticatedUser
 from app.models.exception import HttpException
+from app.security.jwt_auth import JWTVerifier, AuthenticatedUser
 from app.security.ownership import InMemoryOwnershipStore, TaskOwnershipRecord, require_task_owner
 from app.security.rate_limit import InMemoryRateLimiter
 

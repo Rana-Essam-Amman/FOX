@@ -51,6 +51,6 @@ class TestSubtitleStageResult(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             result = self._run(maker, directory, state)
             subtitle_file = Path(result["subtitle_path"])
-            self.assertEqual(subtitle_file, Path(directory, "subtitle.srt"))
+            self.assertEqual(subtitle_file, Path(directory, "subtitle.gen1.srt"))
             self.assertIn("Hello world", subtitle_file.read_text(encoding="utf-8"))
             self.assertEqual(state.get_task("subtitle-stage")["state"], const.TASK_STATE_COMPLETE)

@@ -7,6 +7,7 @@ import jwt
 import pytest
 
 from app.security.jwt_auth import JWTVerifier, AuthenticatedUser
+from app.models.exception import HttpException
 from app.security.ownership import InMemoryOwnershipStore, TaskOwnershipRecord, require_task_owner
 from app.security.rate_limit import InMemoryRateLimiter
 
@@ -64,6 +65,26 @@ def test_cross_user_isolation():
         with pytest.raises(Exception) as exc:
             require_task_owner("task-owned-by-a", user_b)
         assert "not found" in str(exc.value).lower() or getattr(exc.value, "status_code", None) == 404
+
+
+def test_material_record_cannot_be_used_as_task():
+    store = InMemoryOwnershipStore()
+    store.create(
+        TaskOwnershipRecord(
+            task_id="material-owned-by-a",
+            owner_id="user-a",
+            created_at=datetime.now(timezone.utc),
+            kind="material",
+            metadata={},
+        )
+    )
+    user_a = AuthenticatedUser(sub="user-a")
+
+    with patch("app.security.ownership.ownership_store", store):
+        with pytest.raises(HttpException) as exc:
+            require_task_owner("material-owned-by-a", user_a)
+
+    assert exc.value.status_code == 404
 
 
 def test_unconfigured_auth_fails_closed():

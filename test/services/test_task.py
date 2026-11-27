@@ -312,7 +312,7 @@ class TestTaskService(unittest.TestCase):
         self.assertEqual(generate_bgm.call_args.kwargs["prompt"], "warm acoustic")
         self.assertTrue(
             generate_video.call_args.kwargs["bgm_file_override"].endswith(
-                "sonilo-bgm-1.m4a"
+                "sonilo-bgm-1.gen1.m4a"
             )
         )
 
@@ -351,7 +351,7 @@ class TestTaskService(unittest.TestCase):
         self.assertEqual(generate_bgm.call_args.kwargs["prompt"], "gentle documentary")
         self.assertTrue(
             generate_video.call_args.kwargs["bgm_file_override"].endswith(
-                "elevenlabs-bgm-1.mp3"
+                "elevenlabs-bgm-1.gen1.mp3"
             )
         )
 

@@ -17,11 +17,14 @@ import cli
 from app.config import config as app_config
 from app.models import schema as app_schema
 from app.models.schema import VideoTransitionMode
+from app.services import task as task_service
 from app.utils.logging_utils import force_utf8_console
 
 
 class TestCli(unittest.TestCase):
     def setUp(self):
+        self._tracked_state = task_service.sm.state
+        self._existing_task_ids = set(self._tracked_state.list_task_ids())
         # ``build_video_params`` 会读取本地 config.toml 的 [ui] 段作为默认值。
         # 不做隔离时，这些测试就依赖开发机的状态：配置里保存的字体一旦已被
         # 删除，``prepare_cli_files`` 的字体校验就会触发，让与此无关的测试以
@@ -29,6 +32,11 @@ class TestCli(unittest.TestCase):
         ui_patch = patch.dict(app_config.ui, {}, clear=True)
         ui_patch.start()
         self.addCleanup(ui_patch.stop)
+        self.addCleanup(self._cleanup_created_tasks)
+
+    def _cleanup_created_tasks(self):
+        for task_id in set(self._tracked_state.list_task_ids()) - self._existing_task_ids:
+            self._tracked_state.authorized_delete(task_id)
 
     def test_default_voice_is_valid_edge_tts_voice(self):
         args = cli.parse_args(["--video-subject", "测试主题"])

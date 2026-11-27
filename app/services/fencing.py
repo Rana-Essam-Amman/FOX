@@ -105,6 +105,9 @@ def compare_and_write(
 def get_generation(redis_client, task_id: str) -> int | None:
     """Read the current generation. Returns None if absent or wrong type."""
     try:
+        marker = redis_client.hget(task_id, "task_id")
+        if marker not in (task_id, task_id.encode("utf-8")):
+            return None
         value = redis_client.hget(task_id, "generation")
     except Exception:
         return None
@@ -130,6 +133,9 @@ if not expected or expected < 1 then
     return 0
 end
 if not redis.call("ZSCORE", KEYS[1], ARGV[1]) then
+    return 0
+end
+if redis.call("HGET", ARGV[3], "task_id") ~= ARGV[3] then
     return 0
 end
 local gen = redis.call("HGET", ARGV[3], "generation")

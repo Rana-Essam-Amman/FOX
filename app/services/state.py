@@ -81,6 +81,27 @@ current_generation: ContextVar[int | None] = ContextVar("current_generation", de
 # Base class for state management
 class BaseState(ABC):
     @abstractmethod
+    def create_task(
+        self,
+        task_id: str,
+        state: int = const.TASK_STATE_PROCESSING,
+        progress: int = 0,
+        **kwargs,
+    ) -> bool:
+        """Create a new task record without requiring a worker generation."""
+        pass
+
+    @abstractmethod
+    def recovery_patch(
+        self,
+        task_id: str,
+        expected_generation: int | None = None,
+        **kwargs,
+    ) -> bool:
+        """Apply the narrow recovery transition for a task that has not started."""
+        pass
+
+    @abstractmethod
     def update_task(
         self,
         task_id: str,

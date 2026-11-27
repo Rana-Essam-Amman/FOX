@@ -583,6 +583,7 @@ class TestVideoControllerTasks(unittest.TestCase):
             "progress": 100,
             "cross_post_state": const.CROSS_POST_STATE_COMPLETE,
         }
+        store = self._ownership_store_for("completed-task")
 
         with (
             patch.object(
@@ -596,10 +597,11 @@ class TestVideoControllerTasks(unittest.TestCase):
                 return_value="/tmp/mpt-completed-task-test",
             ),
             patch.object(video_controller.os.path, "exists", return_value=False),
-            patch.object(video_controller.sm.state, "delete_task") as delete_task,
+            patch.object(video_controller.sm.state, "authorized_delete", create=True) as delete_task,
+            patch("app.security.ownership.ownership_store", store),
         ):
             response = video_controller.delete_video(
-                self._request(), task_id="completed-task"
+                self._request(), "completed-task", user=self._authed_user()
             )
 
         self.assertEqual(response["status"], 200)

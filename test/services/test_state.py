@@ -10,7 +10,7 @@ from unittest.mock import Mock
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from app.models import const
-from app.services.state import MemoryState, RedisState
+from app.services.state import MemoryState, RedisState, current_generation
 
 
 class _FakeRedisPipeline:
@@ -99,6 +99,59 @@ class _FakeRedis:
 
 
 class TestMemoryState(unittest.TestCase):
+    def test_generation_acquisition_and_artifact_publication_are_fenced(self):
+        state = MemoryState()
+        state.create_task("task-generation")
+
+        first = state.acquire_generation("task-generation")
+        self.assertEqual(first, 1)
+        self.assertTrue(
+            state.publish_artifact_reference(
+                "task-generation", "videos", ["first.mp4"], first
+            )
+        )
+
+        second = state.acquire_generation("task-generation")
+        self.assertEqual(second, 2)
+        self.assertFalse(
+            state.publish_artifact_reference(
+                "task-generation", "videos", ["stale.mp4"], first
+            )
+        )
+        self.assertTrue(
+            state.publish_artifact_reference(
+                "task-generation", "videos", ["second.mp4"], second
+            )
+        )
+        self.assertEqual(
+            state.get_task("task-generation")["videos"], ["second.mp4"]
+        )
+
+    def test_memory_worker_updates_reject_stale_generation(self):
+        state = MemoryState()
+        state.create_task("task-stale-worker")
+        first = state.acquire_generation("task-stale-worker")
+        token = current_generation.set(first)
+        try:
+            self.assertTrue(state.update_task("task-stale-worker", progress=25))
+            self.assertEqual(
+                state.acquire_generation("task-stale-worker"), first + 1
+            )
+            self.assertFalse(state.update_task("task-stale-worker", progress=90))
+        finally:
+            current_generation.reset(token)
+
+        self.assertEqual(
+            state.get_task("task-stale-worker")["progress"], 25
+        )
+
+    def test_authorized_delete_removes_memory_task(self):
+        state = MemoryState()
+        state.create_task("task-delete")
+        self.assertTrue(state.authorized_delete("task-delete"))
+        self.assertFalse(state.authorized_delete("task-delete"))
+        self.assertIsNone(state.get_task("task-delete"))
+
     def test_progress_update_preserves_existing_task_details(self):
         state = MemoryState()
         state.update_task(

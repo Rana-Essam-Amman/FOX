@@ -11,6 +11,17 @@ from app.config import config
 from app.models import const
 
 
+_CREATE_TASK_SCRIPT = """
+if redis.call("EXISTS", KEYS[1]) ~= 0 then
+    return 0
+end
+for i = 1, #ARGV, 2 do
+    redis.call("HSET", KEYS[1], ARGV[i], ARGV[i + 1])
+end
+return 1
+"""
+
+
 _PATCH_EXISTING_TASK_SCRIPT = """
 -- Match discovery/get_task ownership checks inside the same atomic operation.
 -- Other services and our queue may share this database or reuse a deleted key.
@@ -149,7 +160,11 @@ class MemoryState(BaseState):
             expected_generation = current_generation.get()
             existing = self._tasks.get(task_id)
             if expected_generation is not None and (
-                existing is None or existing.get("generation") != expected_generation
+                isinstance(expected_generation, bool)
+                or not isinstance(expected_generation, int)
+                or expected_generation < 1
+                or existing is None
+                or existing.get("generation") != expected_generation
             ):
                 return False
             self._tasks[task_id] = {
@@ -426,14 +441,16 @@ class RedisState(BaseState):
             "progress": progress,
             **kwargs,
         }
-        self._redis.hset(
-            task_id,
-            mapping={
-                field: self._serialize_field(field, value)
-                for field, value in fields.items()
-            },
-        )
-        return True
+        mapping = {
+            field: self._serialize_field(field, value)
+            for field, value in fields.items()
+        }
+        args = []
+        for field, value in mapping.items():
+            args.extend((field, value))
+        return bool(self._redis.eval(
+            _CREATE_TASK_SCRIPT, 1, task_id, *args
+        ))
 
     def authorized_delete(self, task_id: str) -> bool:
         """Explicit deletion after route-level ownership authorization.
@@ -525,10 +542,14 @@ class RedisState(BaseState):
     def delete_task(self, task_id: str, generation: int | None = None) -> bool:
         """Worker-originated delete. Requires valid generation. Returns actual result."""
         expected = generation if generation is not None else current_generation.get()
-        if expected is None or expected < 1:
+        from app.services.fencing import is_valid_generation
+        if not is_valid_generation(expected):
             return False
         script = """
         if redis.call("TYPE", KEYS[1]).ok ~= "hash" then
+            return 0
+        end
+        if redis.call("HGET", KEYS[1], "task_id") ~= KEYS[1] then
             return 0
         end
         local current = redis.call("HGET", KEYS[1], "generation")

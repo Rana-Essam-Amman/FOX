@@ -96,7 +96,11 @@ class BaseState(ABC):
 
     @abstractmethod
     def publish_artifact_reference(
-        self, task_id: str, field: str, artifact_reference, expected_generation: int | None
+        self,
+        task_id: str,
+        field: str,
+        artifact_reference,
+        expected_generation: int | None,
     ) -> bool:
         """Publish an artifact reference only while the caller owns the generation."""
         pass

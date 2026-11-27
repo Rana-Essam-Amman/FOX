@@ -139,10 +139,10 @@ class TestPartialBatchResults(unittest.TestCase):
             failed_checkpoint = False
 
             def update_task(self, task_id, *args, **kwargs):
+                task = self.get_task(task_id)
                 if (
-                    kwargs.get("videos")
-                    and kwargs.get("state", tm.const.TASK_STATE_PROCESSING)
-                    == tm.const.TASK_STATE_PROCESSING
+                    task and task.get("videos")
+                    and kwargs.get("progress", 0) > 50
                     and not self.failed_checkpoint
                 ):
                     self.failed_checkpoint = True
@@ -154,7 +154,7 @@ class TestPartialBatchResults(unittest.TestCase):
             result, checkpoints = self._run_batch(directory, state)
             self.assertEqual(len(checkpoints), 1)
             self.assertEqual(result["videos"], [
-                os.path.join(directory, "partial-batch", "final-1.mp4"),
+                os.path.join(directory, "partial-batch", "final-1.gen1.mp4"),
             ])
             self.assertEqual(result["state"], tm.const.TASK_STATE_FAILED)
             self.assertEqual(result["error"], "OSError: checkpoint unavailable")

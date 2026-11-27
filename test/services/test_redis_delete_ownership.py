@@ -32,7 +32,7 @@ def test_delete_checks_ownership_and_deletes_in_one_command():
     state = RedisState.__new__(RedisState)
     state._redis = Mock()
 
-    assert state.delete_task("task-1") is None
+    assert state.authorized_delete("task-1") is True
 
     state._redis.eval.assert_called_once_with(_DELETE_OWNED_TASK_SCRIPT, 1, "task-1")
     state._redis.delete.assert_not_called()
@@ -47,7 +47,7 @@ def test_delete_does_not_hide_errors_or_fall_back_to_unsafe_delete(error):
     state._redis.eval.side_effect = ResponseError(error)
 
     with pytest.raises(ResponseError, match=error):
-        state.delete_task("task-1")
+        state.authorized_delete("task-1")
 
     state._redis.delete.assert_not_called()
 
@@ -99,13 +99,13 @@ def _replace_task_key(state, key, kind):
 @pytest.mark.parametrize("kind", REPLACEMENT_KINDS)
 def test_delete_preserves_repurposed_key_and_expiry(native_state, kind):
     state, key = native_state
-    state.update_task(key, state=const.TASK_STATE_COMPLETE, progress=100)
+    state.create_task(key, state=const.TASK_STATE_COMPLETE, progress=100)
     assert state.get_task(key)["state"] == const.TASK_STATE_COMPLETE
     before = _replace_task_key(state, key, kind)
     assert state.get_task(key) is None
 
-    state.delete_task(key)
-    state.delete_task(key)
+    state.authorized_delete(key)
+    state.authorized_delete(key)
 
     assert state._redis.dump(key) == before
     assert 0 < state._redis.pttl(key) <= 60000
@@ -115,9 +115,9 @@ def test_delete_preserves_repurposed_key_and_expiry(native_state, kind):
 def test_delete_owned_and_absent_tasks_is_idempotent(native_state, present):
     state, key = native_state
     if present:
-        state.update_task(key, state=const.TASK_STATE_COMPLETE, progress=100)
-    state.delete_task(key)
-    state.delete_task(key)
+        state.create_task(key, state=const.TASK_STATE_COMPLETE, progress=100)
+    state.authorized_delete(key)
+    state.authorized_delete(key)
     assert not state._redis.exists(key)
 
 
@@ -125,9 +125,9 @@ def test_delete_accepts_matching_unicode_task_marker(native_state):
     state, key = native_state
     unicode_key = f"{key}-任务"
     try:
-        state.update_task(unicode_key, state=const.TASK_STATE_COMPLETE)
+        state.create_task(unicode_key, state=const.TASK_STATE_COMPLETE)
         assert state.get_task(unicode_key)["task_id"] == unicode_key
-        state.delete_task(unicode_key)
+        state.authorized_delete(unicode_key)
         assert not state._redis.exists(unicode_key)
     finally:
         state._redis.delete(unicode_key)
@@ -138,7 +138,7 @@ def test_concurrent_replacement_and_delete_always_preserve_foreign_key(native_st
     with ThreadPoolExecutor(max_workers=2) as executor:
         for _ in range(50):
             state._redis.delete(key)
-            state.update_task(key, state=const.TASK_STATE_COMPLETE)
+            state.create_task(key, state=const.TASK_STATE_COMPLETE)
             barrier = Barrier(2)
 
             def replace():
@@ -151,7 +151,7 @@ def test_concurrent_replacement_and_delete_always_preserve_foreign_key(native_st
 
             def delete():
                 barrier.wait(timeout=5)
-                state.delete_task(key)
+                state.authorized_delete(key)
 
             futures = [executor.submit(replace), executor.submit(delete)]
             for future in futures:
@@ -183,7 +183,7 @@ def test_http_delete_preserves_key_repurposed_after_directory_cleanup(
     native_state, deletion_client, tmp_path, kind
 ):
     state, key = native_state
-    state.update_task(key, state=const.TASK_STATE_COMPLETE, progress=100)
+    state.create_task(key, state=const.TASK_STATE_COMPLETE, progress=100)
     task_dir = tmp_path / key
     task_dir.mkdir()
     (task_dir / "artifact.txt").write_text("generated artifact", encoding="utf-8")
@@ -216,7 +216,7 @@ def test_http_deletion_keeps_existing_guards(native_state, deletion_client, tmp_
     if control == "foreign":
         state._redis.set(key, "other-service")
     else:
-        state.update_task(
+        state.create_task(
             key,
             state=const.TASK_STATE_PROCESSING if control == "busy" else const.TASK_STATE_COMPLETE,
             progress=100,

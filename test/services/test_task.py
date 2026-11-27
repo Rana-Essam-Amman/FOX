@@ -27,6 +27,24 @@ RUN_INTEGRATION_TESTS = os.environ.get("MPT_RUN_INTEGRATION_TESTS", "").lower() 
 
 class TestTaskService(unittest.TestCase):
     def setUp(self):
+        # Direct service tests model the generation already acquired by the
+        # production worker. Initial records are created before that mutation.
+        self._original_memory_update = MemoryState.update_task
+
+        def worker_update(store, task_id, *args, **kwargs):
+            generation = kwargs.pop("generation", 1)
+            if store.get_task(task_id) is None:
+                return store.create_task(
+                    task_id, *args, generation=generation, **kwargs
+                )
+            return self._original_memory_update(
+                store, task_id, *args, generation=generation, **kwargs
+            )
+
+        self._memory_update_patch = patch.object(
+            MemoryState, "update_task", worker_update
+        )
+        self._memory_update_patch.start()
         # 发布 Future 注册表是进程级状态。测试间清理可以避免某个模拟 Future
         # 影响后续恢复测试，同时不会触碰真正线程池中的生产任务。
         with tm._cross_post_registry_lock:
@@ -35,6 +53,7 @@ class TestTaskService(unittest.TestCase):
     def tearDown(self):
         with tm._cross_post_registry_lock:
             tm._cross_post_futures.clear()
+        self._memory_update_patch.stop()
 
     @contextmanager
     def _worker_generation(self, generation=1):

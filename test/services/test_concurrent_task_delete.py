@@ -14,12 +14,14 @@ from app.models import const
 from app.services.state import MemoryState
 from app.security import jwt_auth
 from test.services._oidc_test_authority import authed_client, shared_authority
+from test.services._ownership_isolation import isolate_ownership
 
 
 @pytest.fixture(autouse=True)
 def _oidc_verifier(monkeypatch):
     # Real RS256/JWKS verification for every request in this module; restored after each test.
     monkeypatch.setattr(jwt_auth, "jwt_verifier", shared_authority().verifier())
+    isolate_ownership(monkeypatch, owned=[("task-1", "user-a")])
 
 
 def test_concurrent_task_deletions_do_not_return_server_error():

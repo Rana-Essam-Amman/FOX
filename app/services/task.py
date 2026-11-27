@@ -1220,9 +1220,7 @@ def generate_final_videos(
         final_video_paths.append(final_video_path)
         combined_video_paths.append(combined_video_path)
         # Publish the complete list atomically under our generation.
-        from app.services.fencing import publish_artifact_reference
-        if not publish_artifact_reference(
-            sm.state._redis if hasattr(sm.state, "_redis") else None,
+        if not sm.state.publish_artifact_reference(
             task_id,
             "videos",
             list(final_video_paths),
@@ -2059,7 +2057,7 @@ def _run_pipeline(
 
 
 class GenerationAcquisitionError(RuntimeError):
-    """Raised when a Redis-backed worker cannot acquire a fencing generation."""
+    """Raised when a worker cannot acquire a valid fencing generation."""
 
 
 def start(
@@ -2082,24 +2080,29 @@ def start(
     ``allow_server_file_input`` 只供本机 CLI 使用。HTTP API 和 WebUI 必须保持
     默认值，让自定义音频始终受当前任务目录约束。
     """
-    # Acquire a new fencing generation before any pipeline work.
-    # Redis-backed execution must obtain a valid generation or fail closed.
+    # Acquire a generation through the state-backend contract. Redis uses an
+    # atomic Lua increment; MemoryState uses its lock for single-process runs.
+    # A missing task remains a hard failure for Redis-backed workers. In-memory
+    # script-only/unit entry points may run without a persisted task record.
     is_redis = hasattr(sm.state, "_redis")
     generation = None
-    if is_redis:
-        try:
-            generation = acquire_generation(sm.state._redis, task_id)
-        except Exception as exc:
-            logger.error(f"generation acquisition failed for {task_id}: {exc}")
-            if _generation_handoff is not None:
-                _generation_handoff.fail()
-            raise GenerationAcquisitionError(f"failed to acquire generation: {exc}") from exc
-        if generation is None or generation < 1:
-            if _generation_handoff is not None:
-                _generation_handoff.fail()
-            raise GenerationAcquisitionError(
-                f"acquire_generation returned invalid value {generation!r} for {task_id}"
-            )
+    try:
+        generation = sm.state.acquire_generation(task_id)
+    except Exception as exc:
+        logger.error(f"generation acquisition failed for {task_id}: {exc}")
+        if _generation_handoff is not None:
+            _generation_handoff.fail()
+        raise GenerationAcquisitionError(f"failed to acquire generation: {exc}") from exc
+    if is_redis and (
+        isinstance(generation, bool)
+        or not isinstance(generation, int)
+        or generation < 1
+    ):
+        if _generation_handoff is not None:
+            _generation_handoff.fail()
+        raise GenerationAcquisitionError(
+            f"acquire_generation returned invalid value {generation!r} for {task_id}"
+        )
     # Publish to heartbeat before pipeline work. Heartbeat waits on this.
     if _generation_handoff is not None:
         _generation_handoff.publish(generation)

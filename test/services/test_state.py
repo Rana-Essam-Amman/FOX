@@ -144,6 +144,23 @@ class TestMemoryState(unittest.TestCase):
             state.get_task("task-generation")["videos"], ["second.mp4"]
         )
 
+    def test_memory_mutations_reject_boolean_stored_generation(self):
+        state = MemoryState()
+        self.assertTrue(state.create_task("boolean-generation", generation=True))
+        token = current_generation.set(1)
+        try:
+            self.assertFalse(state.update_task("boolean-generation", progress=50))
+            self.assertFalse(state.patch_task("boolean-generation", value="bad"))
+            self.assertFalse(
+                state.publish_artifact_reference(
+                    "boolean-generation", "videos", ["bad.mp4"], 1
+                )
+            )
+        finally:
+            current_generation.reset(token)
+        self.assertIsNone(state.acquire_generation("boolean-generation"))
+        self.assertNotIn("videos", state.get_task("boolean-generation"))
+
     def test_memory_worker_updates_reject_stale_generation(self):
         state = MemoryState()
         state.create_task("task-stale-worker")

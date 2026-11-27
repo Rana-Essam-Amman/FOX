@@ -79,6 +79,10 @@ class InMemoryOwnershipStore(TaskOwnershipStore):
 
 ownership_store: TaskOwnershipStore = create_ownership_store()
 
+# These are the only task kinds admitted by the authenticated task endpoints.
+# Material records share the same ownership table but are not task resources.
+TASK_OWNERSHIP_KINDS = frozenset({"video", "subtitle", "audio"})
+
 
 def require_task_owner(task_id: str, user: AuthenticatedUser) -> TaskOwnershipRecord:
     record = ownership_store.get(task_id)
@@ -86,7 +90,7 @@ def require_task_owner(task_id: str, user: AuthenticatedUser) -> TaskOwnershipRe
         raise HttpException(
             task_id=task_id, status_code=404, message="task not found"
         )
-    if record.owner_id != user.sub:
+    if record.owner_id != user.sub or record.kind not in TASK_OWNERSHIP_KINDS:
         raise HttpException(
             task_id=task_id, status_code=404, message="task not found"
         )

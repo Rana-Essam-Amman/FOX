@@ -134,7 +134,7 @@ def test_queued_audience_survives_config_change(upload_config, selected):
         ) as upload,
     ):
         assert (
-            task._schedule_cross_post(
+            _schedule_with_generation(
                 "audience-snapshot",
                 ["one.mp4", "two.mp4"],
                 VideoParams(video_subject="test"),

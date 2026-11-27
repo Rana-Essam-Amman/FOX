@@ -59,15 +59,11 @@ class _Reporter:
 
 @contextmanager
 def task_scope(task_id, generation=None):
-    # Callers in production pass the generation explicitly. The read-only
-    # fallback keeps isolated in-memory/script scopes fenced as well; the
-    # subsequent patch remains an atomic compare-and-write.
-    if generation is None:
-        try:
-            task = sm.state.get_task(task_id)
-            generation = task.get("generation") if task else None
-        except Exception:
-            generation = None
+    # Never adopt the generation currently stored in the task record here.
+    # A stale worker could otherwise read a newer worker's generation and gain
+    # permission to publish progress. Production callers pass their own token;
+    # callers without one remain unable to write unless their worker context
+    # already carries the generation.
     token = _current.set(_Reporter(task_id, generation=generation))
     try:
         yield

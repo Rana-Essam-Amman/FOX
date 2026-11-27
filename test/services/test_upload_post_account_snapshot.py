@@ -120,7 +120,7 @@ class TestUploadPostAccountSnapshot(unittest.TestCase):
         ):
             video = Path(directory, "video.mp4")
             video.write_bytes(b"local video fixture")
-            error = tm._schedule_cross_post(
+            error = _schedule_with_generation(
                 task_id, [str(video)], VideoParams(video_subject="Coffee"),
                 "Prepared script", ["tiktok"], "public",
             )

@@ -49,7 +49,7 @@ def isolated_jobs(monkeypatch):
 ])
 def test_remote_status_keeps_identity_and_last_confirmation_during_retry(isolated_jobs, provider):
     isolated_jobs.update_task("job")
-    with progress.task_scope("job"):
+    with progress.task_scope("job", generation=1):
         progress.submitting(provider)
         progress.remote(provider, "paid-123", "running")
         before = isolated_jobs.get_task("job")["generation_activity"]
@@ -74,7 +74,7 @@ def test_two_task_threads_do_not_mix_progress(isolated_jobs):
 
     def run(task_id):
         isolated_jobs.update_task(task_id)
-        with progress.task_scope(task_id):
+        with progress.task_scope(task_id, generation=1):
             progress.submitting("ofox")
             gate.wait(timeout=5)
             progress.remote("ofox", task_id + "-remote", "running")
@@ -85,6 +85,19 @@ def test_two_task_threads_do_not_mix_progress(isolated_jobs):
         assert isolated_jobs.get_task(task_id)["generation_activity"]["remote_id"] == task_id + "-remote"
     progress.submitting("outside-task")
     assert len(isolated_jobs.list_task_ids()) == 2
+
+
+def test_stale_worker_cannot_adopt_newer_stored_generation(isolated_jobs):
+    isolated_jobs.create_task("newer-generation", generation=2)
+    token = sm.current_generation.set(1)
+    try:
+        with progress.task_scope("newer-generation"):
+            progress.remote("jalapeno", "stale-worker", "running")
+    finally:
+        sm.current_generation.reset(token)
+    task = isolated_jobs.get_task("newer-generation")
+    assert task["generation"] == 2
+    assert "generation_activity" not in task
 
 
 def test_progress_failure_cannot_abort_paid_work_or_recreate_deleted_task(isolated_jobs):
@@ -98,7 +111,7 @@ def test_progress_failure_cannot_abort_paid_work_or_recreate_deleted_task(isolat
 
 def test_progress_never_publishes_url_or_arbitrary_remote_status(isolated_jobs):
     isolated_jobs.update_task("job")
-    with progress.task_scope("job"):
+    with progress.task_scope("job", generation=1):
         progress.remote("jalapeno", "https://example.test/?key=secret", "secret response")
     activity = isolated_jobs.get_task("job")["generation_activity"]
     assert activity["remote_id"] == ""
@@ -151,7 +164,7 @@ def test_provider_pollers_publish_real_http_retry_and_completion(isolated_jobs, 
     args = {"task_id":"paid-123", "headers":{}, "api_key":"test-key"}
     isolated_jobs.update_task("job")
     try:
-        with progress.task_scope("job"):
+        with progress.task_scope("job", generation=1):
             progress.submitting(provider)
             if provider in {"jalapeno", "volcengine_seedance"}:
                 volcengine_seedance._wait_for_task(tasks_url=base, **args)
@@ -314,7 +327,7 @@ def test_parallel_real_downloads_publish_activity_from_worker_threads(isolated_j
     isolated_jobs.update_task("parallel")
     try:
         with patch.dict(config.app, {"material_concurrency":2}):
-            with progress.task_scope("parallel"):
+            with progress.task_scope("parallel", generation=1):
                 progress.stage("materials")
                 result = material._download_materials_in_parallel(
                     [("",MaterialInfo(url=f"{base}/a.mp4")),("",MaterialInfo(url=f"{base}/b.mp4"))],

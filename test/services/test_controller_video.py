@@ -342,7 +342,7 @@ class TestVideoControllerTasks(unittest.TestCase):
                 "add_task",
                 side_effect=TaskQueueFullError("queue full"),
             ),
-            patch.object(video_controller.sm.state, "authorized_delete", create=True) as delete_task,
+            patch.object(video_controller.sm.state, "authorized_delete") as delete_task,
             patch("app.controllers.v1.video.require_authenticated_user", return_value=user),
             patch("app.security.rate_limit.rate_limiter.check_request"),
             patch("app.security.rate_limit.rate_limiter.check_generation"),

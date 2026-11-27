@@ -660,10 +660,11 @@ class TestTaskService(unittest.TestCase):
             "remote run timeout"
         )
         state = MemoryState()
-        state.update_task(
+        state.create_task(
             "loomloom-material-timeout",
             state=tm.const.TASK_STATE_PROCESSING,
             progress=40,
+            generation=1,
         )
 
         with (
@@ -698,7 +699,7 @@ class TestTaskService(unittest.TestCase):
         ):
             with self.subTest(error_type=error_type):
                 state = MemoryState()
-                state.update_task("wavespeed-paid-failure", progress=40)
+                state.create_task("wavespeed-paid-failure", progress=40, generation=1)
                 with (
                     patch.object(tm.sm, "state", state),
                     patch.object(
@@ -728,7 +729,7 @@ class TestTaskService(unittest.TestCase):
         ):
             with self.subTest(error_type=error_type):
                 state = MemoryState()
-                state.update_task("openai-image-paid-failure", progress=40)
+                state.create_task("openai-image-paid-failure", progress=40, generation=1)
                 with (
                     patch.object(tm.sm, "state", state),
                     patch.object(
@@ -812,10 +813,11 @@ class TestTaskService(unittest.TestCase):
     def test_mark_task_failed_preserves_a_specific_service_failure(self):
         """服务层已记录具体错误时，编排层不能再用通用错误覆盖它。"""
         state = MemoryState()
-        state.update_task(
+        state.create_task(
             "specific-service-failure",
             state=tm.const.TASK_STATE_FAILED,
             progress=40,
+            generation=1,
             failed_stage="materials",
             error="remote run timed out",
             loomloom_run_id="run-1",
@@ -993,6 +995,7 @@ class TestTaskService(unittest.TestCase):
         task_dir = utils.task_dir(task_id)
         self.addCleanup(shutil.rmtree, task_dir, ignore_errors=True)
         state = MemoryState()
+        state.create_task(task_id, generation=1)
 
         with tempfile.NamedTemporaryFile(suffix=".mp3") as server_audio:
             server_audio.write(b"fake audio")
@@ -1081,6 +1084,7 @@ class TestTaskService(unittest.TestCase):
             voice_name="test-voice",
         )
         state = MemoryState()
+        state.create_task(task_id, generation=1)
 
         with (
             patch.object(tm.voice, "tts") as tts,
@@ -2171,10 +2175,11 @@ class TestTaskService(unittest.TestCase):
         for case_name, (platforms, expected_platform) in cases.items():
             with self.subTest(case=case_name):
                 task_id = f"caption-{case_name}"
-                state.update_task(
+                state.create_task(
                     task_id,
                     state=tm.const.TASK_STATE_COMPLETE,
                     progress=100,
+                    generation=1,
                     videos=["final.mp4"],
                     cross_post_state=tm.const.CROSS_POST_STATE_PENDING,
                 )
@@ -2293,10 +2298,11 @@ class TestTaskService(unittest.TestCase):
         for case_name, (metadata, subject, expected_title) in cases.items():
             with self.subTest(case=case_name):
                 task_id = f"fallback-title-{case_name}"
-                state.update_task(
+                state.create_task(
                     task_id,
                     state=tm.const.TASK_STATE_COMPLETE,
                     progress=100,
+                    generation=1,
                     videos=["final.mp4"],
                     cross_post_state=tm.const.CROSS_POST_STATE_PENDING,
                 )

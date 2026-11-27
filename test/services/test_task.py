@@ -2192,15 +2192,16 @@ class TestTaskService(unittest.TestCase):
                         return_value={"success": True},
                     ) as cross_post,
                 ):
-                    tm._run_cross_post(
-                        task_id,
-                        ("final.mp4",),
-                        "Coffee",
-                        "A short coffee story.",
-                        "en",
-                        platforms,
-                        "private",
-                    )
+                    with self._worker_generation():
+                        tm._run_cross_post(
+                            task_id,
+                            ("final.mp4",),
+                            "Coffee",
+                            "A short coffee story.",
+                            "en",
+                            platforms,
+                            "private",
+                        )
 
                 generate_metadata.assert_called_once_with(
                     video_subject="Coffee",
@@ -2313,15 +2314,16 @@ class TestTaskService(unittest.TestCase):
                         return_value={"success": True},
                     ) as cross_post,
                 ):
-                    tm._run_cross_post(
-                        task_id,
-                        ("final.mp4",),
-                        subject,
-                        "",
-                        "",
-                        ("tiktok",),
-                        "private",
-                    )
+                    with self._worker_generation():
+                        tm._run_cross_post(
+                            task_id,
+                            ("final.mp4",),
+                            subject,
+                            "",
+                            "",
+                            ("tiktok",),
+                            "private",
+                        )
 
                 generate_metadata.assert_called_once()
                 cross_post.assert_called_once()

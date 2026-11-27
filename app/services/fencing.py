@@ -14,10 +14,17 @@ _ACQUIRE_GENERATION_SCRIPT = """
 if redis.call("TYPE", KEYS[1]).ok ~= "hash" then
     return nil
 end
+if redis.call("HGET", KEYS[1], "task_id") ~= KEYS[1] then
+    return nil
+end
 local current = redis.call("HGET", KEYS[1], "generation")
 local next_gen = 1
 if current then
-    next_gen = tonumber(current) + 1
+    local current_number = tonumber(current)
+    if not current_number or current_number < 0 or current_number % 1 ~= 0 then
+        return nil
+    end
+    next_gen = current_number + 1
 end
 redis.call("HSET", KEYS[1], "generation", next_gen)
 return next_gen

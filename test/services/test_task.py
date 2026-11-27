@@ -1793,13 +1793,13 @@ class TestTaskService(unittest.TestCase):
         ):
             with self._worker_generation():
                 tm._run_cross_post(
-                "cross-post-worker-failure",
-                ("final.mp4",),
-                "Coffee",
-                "A short coffee story.",
-                "en",
-                ("youtube",),
-                "private",
+                    "cross-post-worker-failure",
+                    ("final.mp4",),
+                    "Coffee",
+                    "A short coffee story.",
+                    "en",
+                    ("youtube",),
+                    "private",
             )
 
         cross_post.assert_not_called()
@@ -1838,13 +1838,13 @@ class TestTaskService(unittest.TestCase):
         ):
             with self._worker_generation():
                 tm._run_cross_post(
-                "background-upload",
-                ("final.mp4",),
-                "Coffee",
-                "Coffee script",
-                "en",
-                ("tiktok",),
-                "public",
+                    "background-upload",
+                    ("final.mp4",),
+                    "Coffee",
+                    "Coffee script",
+                    "en",
+                    ("tiktok",),
+                    "public",
             )
 
         self.assertEqual(
@@ -1884,13 +1884,13 @@ class TestTaskService(unittest.TestCase):
         ):
             with self._worker_generation():
                 tm._run_cross_post(
-                "background-upload-error",
-                ("final.mp4",),
-                "Coffee",
-                "Coffee script",
-                "en",
-                ("tiktok",),
-                "public",
+                    "background-upload-error",
+                    ("final.mp4",),
+                    "Coffee",
+                    "Coffee script",
+                    "en",
+                    ("tiktok",),
+                    "public",
             )
 
         failed = state.get_task("background-upload-error")
@@ -1969,12 +1969,12 @@ class TestTaskService(unittest.TestCase):
         ):
             with self._worker_generation():
                 scheduling_error = tm._schedule_cross_post(
-                task_id="cross-post-schedule-failure",
-                video_paths=["final.mp4"],
-                params=VideoParams(video_subject="Coffee"),
-                video_script="A short coffee story.",
-                platforms=["tiktok"],
-                youtube_privacy_status="private",
+                    task_id="cross-post-schedule-failure",
+                    video_paths=["final.mp4"],
+                    params=VideoParams(video_subject="Coffee"),
+                    video_script="A short coffee story.",
+                    platforms=["tiktok"],
+                    youtube_privacy_status="private",
             )
 
         slots.release.assert_called_once_with()
@@ -2081,13 +2081,13 @@ class TestTaskService(unittest.TestCase):
         ):
             with self._worker_generation():
                 tm._run_cross_post(
-                "transient-state-failure",
-                ("final.mp4",),
-                "Coffee",
-                "A short coffee story.",
-                "en",
-                ("tiktok",),
-                "private",
+                    "transient-state-failure",
+                    ("final.mp4",),
+                    "Coffee",
+                    "A short coffee story.",
+                    "en",
+                    ("tiktok",),
+                    "private",
             )
 
         sleep.assert_called_once_with(tm._CROSS_POST_STATE_RETRY_DELAY_SECONDS)
@@ -2193,13 +2193,13 @@ class TestTaskService(unittest.TestCase):
         ):
             with self._worker_generation():
                 tm._run_cross_post(
-                "shared-youtube-metadata",
-                ("final-1.mp4", "final-2.mp4"),
-                "Coffee",
-                "A short coffee story.",
-                "en",
-                ("youtube",),
-                "unlisted",
+                    "shared-youtube-metadata",
+                    ("final-1.mp4", "final-2.mp4"),
+                    "Coffee",
+                    "A short coffee story.",
+                    "en",
+                    ("youtube",),
+                    "unlisted",
             )
 
         generate_metadata.assert_called_once_with(
@@ -2571,12 +2571,12 @@ class TestTaskService(unittest.TestCase):
         ):
             with self._worker_generation():
                 scheduling_error = tm._schedule_cross_post(
-                task_id="cross-post-queue-full",
-                video_paths=["final.mp4"],
-                params=VideoParams(video_subject="Coffee"),
-                video_script="A short coffee story.",
-                platforms=["tiktok"],
-                youtube_privacy_status="private",
+                    task_id="cross-post-queue-full",
+                    video_paths=["final.mp4"],
+                    params=VideoParams(video_subject="Coffee"),
+                    video_script="A short coffee story.",
+                    platforms=["tiktok"],
+                    youtube_privacy_status="private",
             )
 
         submit.assert_not_called()

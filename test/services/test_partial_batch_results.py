@@ -17,6 +17,8 @@ class TestPartialBatchResults(unittest.TestCase):
         self, directory, state, fail_at=None, failure_stage="render", stop_at="video",
     ):
         task_id = "partial-batch"
+        if state.get_task(task_id) is None:
+            state.create_task(task_id)
         task_directory = Path(directory) / task_id
         task_directory.mkdir(exist_ok=True)
         params = VideoParams(

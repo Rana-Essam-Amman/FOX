@@ -99,6 +99,23 @@ class _FakeRedis:
 
 
 class TestMemoryState(unittest.TestCase):
+    def test_update_task_requires_generation_and_never_creates_records(self):
+        state = MemoryState()
+        self.assertFalse(state.update_task("unfenced", progress=25))
+        self.assertIsNone(state.get_task("unfenced"))
+
+        self.assertTrue(state.create_task("owned", progress=10))
+        self.assertFalse(state.create_task("owned", progress=99))
+        self.assertEqual(state.get_task("owned")["progress"], 10)
+        self.assertFalse(state.update_task("owned", progress=50))
+
+        token = current_generation.set(1)
+        try:
+            self.assertTrue(state.update_task("owned", progress=50))
+        finally:
+            current_generation.reset(token)
+        self.assertEqual(state.get_task("owned")["progress"], 50)
+
     def test_generation_acquisition_and_artifact_publication_are_fenced(self):
         state = MemoryState()
         state.create_task("task-generation")

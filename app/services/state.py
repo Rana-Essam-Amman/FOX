@@ -139,28 +139,32 @@ class MemoryState(BaseState):
         task_id: str,
         state: int = const.TASK_STATE_PROCESSING,
         progress: int = 0,
+        generation: int | None = None,
         **kwargs,
     ):
         progress = int(progress)
         if progress > 100:
             progress = 100
 
+        expected_generation = (
+            generation if generation is not None else current_generation.get()
+        )
+        if (
+            isinstance(expected_generation, bool)
+            or not isinstance(expected_generation, int)
+            or expected_generation < 1
+        ):
+            return False
+
         with self._lock:
-            expected_generation = current_generation.get()
             existing = self._tasks.get(task_id)
-            if expected_generation is not None and (
-                isinstance(expected_generation, bool)
-                or not isinstance(expected_generation, int)
-                or expected_generation < 1
-                or existing is None
-                or existing.get("generation") != expected_generation
-            ):
+            if existing is None or existing.get("generation") != expected_generation:
                 return False
             self._tasks[task_id] = {
                 # Keep fields from earlier pipeline stages, matching Redis
                 # HSET updates. A progress-only update must not erase the
                 # WebUI subject or diagnostic details already stored.
-                **self._tasks.get(task_id, {}),
+                **existing,
                 "task_id": task_id,
                 "state": state,
                 "progress": progress,
@@ -193,8 +197,20 @@ class MemoryState(BaseState):
             return True
 
     def create_task(self, task_id: str, state: int = const.TASK_STATE_PROCESSING, progress: int = 0, **kwargs) -> bool:
-        """Initial creation for in-memory execution. Always succeeds if called."""
-        return self.update_task(task_id, state=state, progress=progress, **kwargs)
+        """Create an initial task record without crossing the worker mutation boundary."""
+        progress = int(progress)
+        if progress > 100:
+            progress = 100
+        with self._lock:
+            if task_id in self._tasks:
+                return False
+            self._tasks[task_id] = {
+                "task_id": task_id,
+                "state": state,
+                "progress": progress,
+                **copy.deepcopy(kwargs),
+            }
+        return True
 
     def acquire_generation(self, task_id: str) -> int | None:
         """Atomically increment the generation of an existing in-memory task."""

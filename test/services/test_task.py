@@ -130,6 +130,7 @@ class TestTaskService(unittest.TestCase):
             video_clip_speed=1.25,
             video_fit_mode="contain",
         )
+        tm.sm.state.create_task("clip-speed-task", generation=1)
 
         with (
             patch.object(tm.video, "combine_videos") as combine_videos,
@@ -157,7 +158,9 @@ class TestTaskService(unittest.TestCase):
         其它字段。越界或无法解析的比例不能把进度推到区间之外。
         """
         state = MemoryState()
-        state.update_task("stage-progress", progress=40, video_subject="咖啡")
+        state.create_task(
+            "stage-progress", generation=1, progress=40, video_subject="咖啡"
+        )
 
         with patch.object(tm.sm, "state", state):
             report = tm._stage_progress_reporter("stage-progress", 40, 50)
@@ -202,7 +205,7 @@ class TestTaskService(unittest.TestCase):
         """
         params = VideoParams(video_subject="test", video_source="pexels")
         state = MemoryState()
-        state.update_task("download-progress", progress=40)
+        state.create_task("download-progress", generation=1, progress=40)
         observed = []
 
         def fake_download_videos(**kwargs):
@@ -217,9 +220,10 @@ class TestTaskService(unittest.TestCase):
                 tm.material, "download_videos", side_effect=fake_download_videos
             ),
         ):
-            result = tm.get_video_materials(
-                "download-progress", params, ["scene"], 10
-            )
+            with self._worker_generation():
+                result = tm.get_video_materials(
+                    "download-progress", params, ["scene"], 10
+                )
 
         self.assertEqual(result, ["a.mp4"])
         self.assertEqual(observed, [42, 45, 50])
@@ -236,7 +240,9 @@ class TestTaskService(unittest.TestCase):
             with self.subTest(video_count=video_count):
                 params = VideoParams(video_subject="test", video_count=video_count)
                 state = MemoryState()
-                state.update_task("combine-progress", progress=50)
+                state.create_task(
+                    "combine-progress", generation=1, progress=50
+                )
                 observed = []
 
                 def fake_combine_videos(**kwargs):
@@ -280,6 +286,8 @@ class TestTaskService(unittest.TestCase):
             sonilo_bgm_prompt="warm acoustic",
         )
 
+        tm.sm.state.create_task("sonilo-task", generation=1)
+
         with (
             patch.object(tm.video, "combine_videos"),
             patch.object(
@@ -317,6 +325,8 @@ class TestTaskService(unittest.TestCase):
             video_music_prompt="gentle documentary",
         )
 
+        tm.sm.state.create_task("elevenlabs-task", generation=1)
+
         with (
             patch.object(tm.video, "combine_videos"),
             patch.object(
@@ -348,6 +358,8 @@ class TestTaskService(unittest.TestCase):
     def test_generate_final_videos_falls_back_on_elevenlabs_failure(self):
         """ElevenLabs 暂时失败时必须保留无配乐视频和结构化警告。"""
         params = VideoParams(video_subject="test", bgm_type="elevenlabs")
+
+        tm.sm.state.create_task("elevenlabs-fallback", generation=1)
 
         with (
             patch.object(tm.video, "combine_videos"),
@@ -381,6 +393,8 @@ class TestTaskService(unittest.TestCase):
         """第三方配乐失败时应完成视频并返回可见警告，而不是丢弃所有产物。"""
         params = VideoParams(video_subject="test", bgm_type="sonilo")
 
+        tm.sm.state.create_task("sonilo-fallback", generation=1)
+
         with (
             patch.object(tm.video, "combine_videos"),
             patch.object(
@@ -413,6 +427,8 @@ class TestTaskService(unittest.TestCase):
             bgm_file="stale-custom-bgm.mp3",
         )
 
+        tm.sm.state.create_task("sonilo-zero-volume", generation=1)
+
         with (
             patch.object(tm.video, "combine_videos"),
             patch.object(tm.sonilo, "generate_bgm") as generate_bgm,
@@ -436,6 +452,8 @@ class TestTaskService(unittest.TestCase):
     def test_generate_final_videos_warns_when_sonilo_mix_fails(self):
         """Sonilo 生成成功但最终混音失败时，任务必须保留视频并返回警告。"""
         params = VideoParams(video_subject="test", bgm_type="sonilo")
+
+        tm.sm.state.create_task("sonilo-mix-fallback", generation=1)
 
         with (
             patch.object(tm.video, "combine_videos"),

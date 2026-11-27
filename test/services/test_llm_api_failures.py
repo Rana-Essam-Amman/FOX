@@ -28,6 +28,6 @@ def test_provider_failure_does_not_return_success(service, handler, body, failed
     request = SimpleNamespace(headers={"x-task-id": "request-1"})
     with patch.object(controller.llm, service, return_value=failed):
         with pytest.raises(HttpException) as raised:
-            handler(request, body)
+            handler(request, body, user=SimpleNamespace(sub='test-user'))
     assert raised.value.status_code == 503
     assert "unavailable" in raised.value.message

@@ -1,8 +1,6 @@
 """PostgreSQL adapters must close every connection on success and failure."""
 
 from datetime import datetime, timezone
-from unittest.mock import Mock
-
 import pytest
 
 from app.models.exception import HttpException
@@ -17,6 +15,7 @@ class FakeCursor:
 
     def __init__(self, connection):
         self.connection = connection
+        self.statement = ""
 
     def __enter__(self):
         return self
@@ -24,11 +23,14 @@ class FakeCursor:
     def __exit__(self, *_args):
         return False
 
-    def execute(self, *_args):
+    def execute(self, statement, *_args):
+        self.statement = statement
         if self.connection.fail_execute:
             raise RuntimeError("database unavailable")
 
     def fetchone(self):
+        if "SELECT task_id" in self.statement:
+            return ("task-1", "user-1", "video", datetime.now(timezone.utc), {})
         return (1,)
 
     def fetchall(self):

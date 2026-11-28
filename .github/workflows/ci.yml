@@ -85,8 +85,8 @@ jobs:
 
       - name: Apply security migrations
         run: |
-          set -e
-          for f in migrations/001_task_ownership.sql migrations/002_rate_limit_counters.sql migrations/003_rls_policies.sql; do
+          set -euo pipefail
+          for f in migrations/*.sql; do
             psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
           done
 

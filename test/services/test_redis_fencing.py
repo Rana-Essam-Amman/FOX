@@ -28,6 +28,20 @@ def test_acquire_generation_ordering(redis_client):
     assert get_generation(redis_client, task_id) == 3
 
 
+def test_idempotent_generation_accepts_integer_valued_legacy_float(redis_client):
+    task_id = f"task-legacy-float-{uuid.uuid4().hex}"
+    redis_client.hset(
+        task_id,
+        mapping={"task_id": task_id, "state": "1", "generation": "1.0"},
+    )
+
+    assert get_generation(redis_client, task_id) == 1
+    assert acquire_generation(
+        redis_client, task_id, request_id=f"request-{uuid.uuid4().hex}"
+    ) == 2
+    assert get_generation(redis_client, task_id) == 2
+
+
 def test_idempotent_generation_acquisition_recovers_lost_reply(redis_client):
     task_id = f"task-lost-reply-{uuid.uuid4().hex}"
     redis_client.hset(task_id, mapping={"task_id": task_id, "state": "1"})

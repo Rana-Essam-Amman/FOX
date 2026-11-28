@@ -111,3 +111,23 @@ def test_heartbeat_start_failure_marks_task_failed_and_releases_slot():
         error="RuntimeError: thread resources exhausted",
     )
     client.zrem.assert_called_once_with(manager.running_slots_key, "reserved-slot")
+
+
+
+def test_missing_task_id_releases_global_and_local_worker_slots():
+    manager, client = make_manager()
+    client.eval.return_value = None
+    task = {"func": lambda: None, "args": (), "kwargs": {}}
+
+    def run_inline(func, *args, **kwargs):
+        manager._run_reserved_task("reserved-slot", func, *args, **kwargs)
+
+    with patch.object(manager, "execute_task", side_effect=run_inline):
+        manager._start_reserved_task(
+            "reserved-slot",
+            task,
+            restore_on_failure=False,
+        )
+
+    assert manager.current_tasks == 0
+    client.zrem.assert_called_once_with(manager.running_slots_key, "reserved-slot")

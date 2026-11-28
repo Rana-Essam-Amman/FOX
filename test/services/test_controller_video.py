@@ -664,6 +664,36 @@ class TestVideoControllerTasks(unittest.TestCase):
                     self.assertEqual(raised.exception.status_code, 404)
 
 
+    def test_create_task_cleans_possible_ownership_record_after_create_error(self):
+        """A lost DB acknowledgement must not leave an orphan ownership row."""
+        body = MagicMock()
+        body.model_dump.return_value = {"video_subject": "Coffee"}
+        user = self._authed_user()
+        persistence_error = RuntimeError("database acknowledgement lost")
+
+        with (
+            patch.object(video_controller.utils, "get_uuid", return_value="ownership-rollback-task"),
+            patch.object(video_controller.sm.state, "create_task", return_value=True),
+            patch.object(video_controller.sm.state, "authorized_delete") as delete_state,
+            patch.object(
+                video_controller.ownership_store,
+                "create",
+                side_effect=persistence_error,
+            ),
+            patch.object(video_controller.ownership_store, "delete", return_value=True) as delete_owner,
+            patch("app.security.rate_limit.rate_limiter.check_request"),
+            patch("app.security.rate_limit.rate_limiter.check_generation"),
+        ):
+            with self.assertRaises(RuntimeError) as raised:
+                video_controller.create_task(
+                    self._request(), body, stop_at="video", user=user
+                )
+
+        self.assertIs(raised.exception, persistence_error)
+        delete_state.assert_called_once_with("ownership-rollback-task")
+        delete_owner.assert_called_once_with("ownership-rollback-task", user.sub)
+
+
 class TestVideoControllerCreateHTTP(unittest.TestCase):
     """验证越界字体在真实 HTTP 入口返回 403/404，而不是创建后台任务。
 

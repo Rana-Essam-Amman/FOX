@@ -23,6 +23,14 @@
 1. migrations/001_task_ownership.sql
 2. migrations/002_rate_limit_counters.sql
 3. migrations/003_rls_policies.sql
+4. migrations/004_public_schema_least_privilege.sql
+
+All schema changes must remain versioned in Git migrations. Do not make ad-hoc
+production schema edits in the Dashboard. The fourth migration explicitly
+revokes Data API grants from anon/authenticated for internal tables and
+functions, while preserving the service_role grants required by trusted
+server-side access. It also changes defaults for objects created by the
+migration executor so future public-schema objects remain deny-by-default.
 
 ## Storage bucket setup
 
@@ -38,9 +46,9 @@ Create a private bucket named `fox-media`. Do not enable public access. The gate
 
 ## Remaining provisioning steps
 
-1. User confirms the Catch-app organization.
+1. Confirm the Catch-app organization.
 2. Create a new Supabase project dedicated to FOX (not Fox-marketplace).
-3. Apply the three migrations.
+3. Apply the four migrations.
 4. Configure Supabase Auth.
 5. Create the private `fox-media` bucket.
 6. Set the environment variables on the FastAPI host.

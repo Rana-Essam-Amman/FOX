@@ -85,3 +85,40 @@ def list_owned_bgm(owner_id: str, storage_dir: str) -> list[dict]:
         entries.append({"name": name, "size": size, "file": record.task_id})
     entries.sort(key=lambda item: (item["name"].casefold(), item["name"]))
     return entries
+
+
+def get_video_task_owner(task_id: str | None) -> str | None:
+    """Return the authenticated owner recorded for a video task.
+
+    Workers receive a task identifier, not a caller-supplied owner ID. Resolve
+    the principal from the immutable ownership record created before enqueue.
+    """
+    if not task_id:
+        return None
+    record = ownership_store.get(task_id)
+    if record is None or record.kind != "video":
+        return None
+    return record.owner_id
+
+
+def resolve_owned_bgm(
+    owner_id: str | None, filename: str, storage_dir: str
+) -> str | None:
+    """Resolve an uploaded BGM only when its immutable record belongs to owner."""
+    if (
+        not owner_id
+        or not filename
+        or not isinstance(filename, str)
+        or filename != os.path.basename(filename)
+    ):
+        return None
+    record = ownership_store.get(filename)
+    if record is None or record.kind != BGM_KIND or record.owner_id != owner_id:
+        return None
+    try:
+        resolved_path = file_security.resolve_path_within_directory(
+            storage_dir, filename
+        )
+    except (ValueError, OSError):
+        return None
+    return resolved_path if os.path.isfile(resolved_path) else None

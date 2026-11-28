@@ -12,6 +12,7 @@ import app.controllers.v1.video as video_controller
 import app.security as security_package
 import app.security.ownership as ownership_module
 from app.security import private_materials
+from app.security import private_bgm
 from app.security.ownership import InMemoryOwnershipStore, TaskOwnershipRecord
 
 _PATCHED_NAMESPACES = (
@@ -19,6 +20,7 @@ _PATCHED_NAMESPACES = (
     security_package,
     video_controller,
     private_materials,
+    private_bgm,
 )
 
 

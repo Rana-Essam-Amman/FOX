@@ -554,8 +554,12 @@ class RedisState(BaseState):
                 or expected_generation < 1
             ):
                 return False
+            serialized_fields = {
+                field: self._serialize_field(field, value)
+                for field, value in kwargs.items()
+            }
             return bool(compare_and_write(
-                self._redis, task_id, expected_generation, kwargs
+                self._redis, task_id, expected_generation, serialized_fields
             ))
         except Exception:
             return False

@@ -293,14 +293,42 @@ class RedisTaskManager(TaskManager):
         kwargs["_generation_handoff"] = handoff
 
         stop_heartbeat = threading.Event()
-        heartbeat = threading.Thread(
-            target=self._renew_slot_until_done,
-            args=(token, stop_heartbeat, handoff),
-            daemon=True,
-        )
-        heartbeat.start()
         self._worker_context.slot_token = token
         try:
+            # Thread creation/start is part of worker admission. If it fails,
+            # recover the never-started task and let the shared finally block
+            # release its reserved Redis slot.
+            try:
+                heartbeat = threading.Thread(
+                    target=self._renew_slot_until_done,
+                    args=(token, stop_heartbeat, handoff),
+                    daemon=True,
+                )
+                heartbeat.start()
+            except Exception as exc:
+                logger.exception(
+                    f"failed to start worker heartbeat for {task_id}: {exc}"
+                )
+                handoff.fail()
+                try:
+                    recovered = sm.state.recovery_patch(
+                        task_id,
+                        expected_generation=None,
+                        state=const.TASK_STATE_FAILED,
+                        failed_stage="worker_startup",
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
+                    if not recovered:
+                        logger.error(
+                            f"worker startup recovery rejected for {task_id}"
+                        )
+                except Exception as recovery_exc:
+                    logger.error(
+                        f"worker startup recovery failed for {task_id}: "
+                        f"{recovery_exc}"
+                    )
+                return
+
             # Durable ownership authorization before any material or provider access.
             # Fail closed on missing record, mismatch, or store error.
             from app.security.task_execution import authorize_task_execution, ExecutionDenied

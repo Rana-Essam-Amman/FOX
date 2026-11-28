@@ -319,13 +319,21 @@ def create_task(
             )
         except Exception:
             # Ownership must exist before the task can be admitted to the queue.
-            # If durable ownership persistence fails, roll back the state record
-            # so we never leave an ownerless processing task.
+            # If persistence fails after the database committed but its
+            # acknowledgement was lost, remove a possibly-created owner record
+            # as well as the initial state record.
             try:
                 sm.state.authorized_delete(task_id)
             except Exception as cleanup_exc:
                 logger.error(
                     f"failed to clean task state after ownership failure, "
+                    f"task_id={task_id}: {cleanup_exc}"
+                )
+            try:
+                ownership_store.delete(task_id, user.sub)
+            except Exception as cleanup_exc:
+                logger.error(
+                    f"failed to clean ownership after persistence failure, "
                     f"task_id={task_id}: {cleanup_exc}"
                 )
             raise

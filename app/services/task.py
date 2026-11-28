@@ -1213,6 +1213,7 @@ def generate_final_videos(
             output_file=final_video_path,
             params=params,
             bgm_file_override=bgm_file_override,
+            task_id=task_id,
         )
         if (
             video_music_provider is not None

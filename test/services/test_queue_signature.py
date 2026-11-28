@@ -55,6 +55,8 @@ def test_generation_acquisition_failure_marks_api_task_failed():
     from app.services import task as tm
 
     manager, client = make_manager()
+    client.eval.return_value = None
+    client.lpop.return_value = None
 
     def fail_before_pipeline(task_id, _generation_handoff):
         raise tm.GenerationAcquisitionError("Redis unavailable")

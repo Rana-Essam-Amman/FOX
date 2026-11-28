@@ -103,3 +103,27 @@ def test_redis_legacy_serialized_records_remain_readable():
     assert task["progress"] == 20
     assert task["videos"] == ["final.mp4"]
     assert task["video_subject"] == "A cup of tea"
+
+
+
+@pytest.mark.parametrize("invalid_generation", [None, False, True, 0, -1, "1", 1.0, 1.5])
+def test_redis_worker_mutations_reject_invalid_generation_tokens(invalid_generation):
+    state = RedisState.__new__(RedisState)
+    state._redis = _FencedFakeRedis([[]])
+    state.create_task("invalid-generation-token")
+    valid_generation = state.acquire_generation("invalid-generation-token")
+    assert valid_generation == 1
+
+    assert state.update_task(
+        "invalid-generation-token",
+        generation=invalid_generation,
+        progress=99,
+    ) is False
+    assert state.patch_task(
+        "invalid-generation-token",
+        generation=invalid_generation,
+        error="must not be written",
+    ) is False
+    stored = state.get_task("invalid-generation-token")
+    assert stored["progress"] == 0
+    assert "error" not in stored

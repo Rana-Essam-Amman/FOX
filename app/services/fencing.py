@@ -1,4 +1,5 @@
 from typing import Any, Mapping
+import math
 import os
 """Redis fencing primitives for task ownership.
 
@@ -97,6 +98,17 @@ return 1
 """
 
 
+def _parse_integer_generation(value: object) -> int | None:
+    """Parse Redis numeric generations using the same integer rule as Lua tonumber."""
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(numeric) or not numeric.is_integer() or numeric < 0:
+        return None
+    return int(numeric)
+
+
 def acquire_generation(
     redis_client,
     task_id: str,
@@ -126,11 +138,8 @@ def acquire_generation(
     if raw_generation is None:
         expected_generation = 0
     else:
-        try:
-            expected_generation = int(raw_generation)
-        except (TypeError, ValueError):
-            return None
-        if expected_generation < 0:
+        expected_generation = _parse_integer_generation(raw_generation)
+        if expected_generation is None:
             return None
 
     arguments = (request_id, str(expected_generation))
@@ -199,10 +208,7 @@ def get_generation(redis_client, task_id: str) -> int | None:
         return None
     if value is None:
         return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
+    return _parse_integer_generation(value)
 
 # Production user-task lease renewal script. Imported by redis_manager.
 RENEW_RUNNING_SLOT_SCRIPT = """

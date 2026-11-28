@@ -887,27 +887,53 @@ def delete_files(files: List[str] | str):
             logger.warning(f"failed to delete temporary file {file}: {str(e)}")
 
 
-def get_bgm_file(bgm_type: str = "random", bgm_file: str = ""):
+def get_bgm_file(
+    bgm_type: str = "random",
+    bgm_file: str = "",
+    task_id: str | None = None,
+):
     if not bgm_type:
         return ""
 
+    # Resolve the principal from the task's immutable ownership record. Never
+    # trust an owner identifier supplied in task parameters or by the client.
+    from app.security.private_bgm import (
+        get_video_task_owner,
+        list_owned_bgm,
+        resolve_owned_bgm,
+    )
+
+    owner_id = get_video_task_owner(task_id)
     if bgm_file:
         try:
-            resolved_bgm_file = bgm_service.resolve_bgm_file(bgm_file)
-        except ValueError as exc:
-            # API 请求里的 bgm_file 来自用户输入，只允许解析到用户 BGM 或内置
-            # 歌曲目录，阻止 MoviePy 读取配置、密钥等任意服务器文件。
-            logger.warning(
-                f"reject unsafe bgm file: {bgm_file}, error: {str(exc)}"
+            return bgm_service.resolve_builtin_bgm_file(os.path.basename(bgm_file))
+        except ValueError:
+            owned_file = (
+                resolve_owned_bgm(
+                    owner_id, bgm_file, bgm_service.uploaded_bgm_dir()
+                )
+                if owner_id
+                else None
             )
+            if owned_file:
+                return owned_file
+            logger.warning("reject unavailable or unowned background music file")
             return ""
-        return resolved_bgm_file
 
     if bgm_type == "random":
-        files = bgm_service.list_bgm_files()
-        # 当背景音乐目录为空时，直接回退为“不使用 BGM”，避免 random.choice([]) 抛异常。
+        files = bgm_service.list_builtin_bgm_files()
+        if owner_id:
+            upload_dir = bgm_service.uploaded_bgm_dir()
+            for entry in list_owned_bgm(owner_id, upload_dir):
+                owned_file = resolve_owned_bgm(
+                    owner_id, entry["file"], upload_dir
+                )
+                if owned_file:
+                    files.append(owned_file)
+        # Never select from the shared upload directory. Missing ownership
+        # fails closed to built-in presets only.
         if not files:
-            logger.warning("no background music files found")
+            logger.warning("no owner-accessible background music files found")
             return ""
         return random.choice(files)
 
@@ -1648,6 +1674,7 @@ def generate_video(
     output_file: str,
     params: VideoParams,
     bgm_file_override: str | None = None,
+    task_id: str | None = None,
 ) -> bool:
     """
     合成最终视频，并返回本次背景音乐处理是否成功。
@@ -1970,6 +1997,7 @@ def generate_video(
                 else get_bgm_file(
                     bgm_type=params.bgm_type,
                     bgm_file=params.bgm_file,
+                    task_id=task_id,
                 )
             )
         bgm_mix_succeeded = True

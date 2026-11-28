@@ -187,7 +187,7 @@ class BaseState(ABC):
 class MemoryState(BaseState):
     def __init__(self):
         self._tasks = {}
-        self._generation_requests = {}
+        self._generation_requests: dict[str, tuple[str, int]] = {}
         self._lock = threading.RLock()
 
     def get_all_tasks(self, page: int, page_size: int):
@@ -301,10 +301,15 @@ class MemoryState(BaseState):
             if request_id is not None:
                 if not isinstance(request_id, str) or not request_id:
                     raise ValueError("request_id must be a non-empty string")
-                previous = self._generation_requests.get((task_id, request_id))
-                if previous is not None:
+                previous = self._generation_requests.get(task_id)
+                if previous is not None and previous[0] == request_id:
+                    previous_generation = previous[1]
                     current = _coerce_stored_generation(task.get("generation"))
-                    return previous if current == previous else None
+                    return (
+                        previous_generation
+                        if current == previous_generation
+                        else None
+                    )
             stored = _coerce_stored_generation(
                 task.get("generation", 0), allow_zero=True
             )
@@ -313,7 +318,9 @@ class MemoryState(BaseState):
             generation = stored + 1
             task["generation"] = generation
             if request_id is not None:
-                self._generation_requests[(task_id, request_id)] = generation
+                # A newer generation fences all older request IDs. Retain only
+                # the latest request per task to bound MemoryState growth.
+                self._generation_requests[task_id] = (request_id, generation)
             return generation
 
     def publish_artifact_reference(
@@ -341,11 +348,7 @@ class MemoryState(BaseState):
         """Delete only after the caller has completed route-level authorization."""
         with self._lock:
             deleted = self._tasks.pop(task_id, None) is not None
-            self._generation_requests = {
-                key: value
-                for key, value in self._generation_requests.items()
-                if key[0] != task_id
-            }
+            self._generation_requests.pop(task_id, None)
             return deleted
 
     def recovery_patch(self, task_id: str, expected_generation: int | None = None, **kwargs) -> bool:
@@ -392,11 +395,7 @@ class MemoryState(BaseState):
     def delete_task(self, task_id: str):
         with self._lock:
             self._tasks.pop(task_id, None)
-            self._generation_requests = {
-                key: value
-                for key, value in self._generation_requests.items()
-                if key[0] != task_id
-            }
+            self._generation_requests.pop(task_id, None)
 
 
 # Redis state management

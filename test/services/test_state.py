@@ -144,6 +144,10 @@ class TestMemoryState(unittest.TestCase):
         self.assertEqual(
             state.get_task("task-idempotent-generation")["generation"], 2
         )
+        self.assertEqual(
+            state._generation_requests,
+            {"task-idempotent-generation": ("worker-b", 2)},
+        )
 
     def test_generation_acquisition_and_artifact_publication_are_fenced(self):
         state = MemoryState()

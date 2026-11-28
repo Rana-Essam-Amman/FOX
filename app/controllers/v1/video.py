@@ -15,6 +15,7 @@ from app.config import config
 from app.controllers import base
 from app.security import require_authenticated_user, require_task_owner, ownership_store, TaskOwnershipRecord
 from app.security.private_materials import list_owned_materials, record_owned_material
+from app.security.private_bgm import list_owned_bgm, record_owned_bgm
 from app.security.material_admission import MaterialAdmissionError, admit_video_materials
 from app.security.material_resolution import MaterialNotFound
 from datetime import datetime, timezone
@@ -467,25 +468,22 @@ def delete_video(request: Request, task_id: str = Path(..., description="Task ID
 @router.get(
     "/musics", response_model=BgmRetrieveResponse, summary="Retrieve local BGM files"
 )
-def get_bgm_list(request: Request):
-    bgm_list = []
-    for file in bgm_service.list_bgm_files():
+def get_bgm_list(request: Request, user=None):
+    if user is None:
+        user = require_authenticated_user(request)
+    # Built-in presets are shared. User uploads are owner-scoped and never
+    # include another user's files or unowned legacy uploads.
+    builtin = []
+    for file in bgm_service.list_builtin_bgm_files():
         filename = os.path.basename(file)
         try:
             size = os.path.getsize(file)
         except OSError as exc:
             logger.warning(f"skip unavailable background music: name={filename}, error={exc}")
             continue
-        bgm_list.append(
-            {
-                "name": filename,
-                "size": size,
-                # 只返回文件名，避免把服务器绝对路径暴露给调用方。服务端会
-                # 在 storage/bgm 和 resource/songs 两个白名单目录中重新解析。
-                "file": filename,
-            }
-        )
-    response = {"files": bgm_list}
+        builtin.append({"name": filename, "size": size, "file": filename})
+    owned = list_owned_bgm(user.sub, bgm_service.uploaded_bgm_dir(create=True))
+    response = {"files": builtin + owned}
     return utils.get_response(200, response)
 
 
@@ -512,8 +510,22 @@ def upload_bgm_file(
     from app.security.rate_limit import rate_limiter
     rate_limiter.check_request(user, base.get_task_id(request))
     request_id = base.get_task_id(request)
+    stored_filename = None
+    stored_path = None
     try:
-        safe_filename = bgm_service.save_bgm_upload(file.filename, file.file)
+        stored_filename = bgm_service.save_bgm_upload(file.filename, file.file)
+        stored_path = os.path.join(
+            bgm_service.uploaded_bgm_dir(create=True), stored_filename
+        )
+        # Ownership is recorded before the upload is returned. On failure the
+        # helper removes only the file this request just wrote.
+        record_owned_bgm(
+            stored_path,
+            stored_filename,
+            file.filename or stored_filename,
+            user.sub,
+            request_id,
+        )
     except bgm_service.BgmUploadError as exc:
         # 上传失败通常可以由用户更换文件后恢复，因此记录 request_id 和明确原因，
         # 但不输出文件内容或绝对路径，避免日志泄露用户数据。
@@ -537,7 +549,7 @@ def upload_bgm_file(
             message=f"{request_id}: background music validation is unavailable",
         )
 
-    response = {"file": safe_filename}
+    response = {"file": stored_filename}
     return utils.get_response(200, response)
 
 @router.get(

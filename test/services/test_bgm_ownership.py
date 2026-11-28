@@ -167,10 +167,14 @@ def test_video_task_can_select_its_own_bgm_and_builtin_preset(
         )
     )
     monkeypatch.setattr(bgm_service, "uploaded_bgm_dir", lambda: str(upload_dir))
+
+    def resolve_builtin(filename):
+        if filename == "preset.mp3":
+            return "/presets/preset.mp3"
+        raise ValueError("not a built-in preset")
+
     monkeypatch.setattr(
-        bgm_service,
-        "resolve_builtin_bgm_file",
-        lambda filename: "/presets/" + filename,
+        bgm_service, "resolve_builtin_bgm_file", resolve_builtin
     )
 
     assert video.get_bgm_file(

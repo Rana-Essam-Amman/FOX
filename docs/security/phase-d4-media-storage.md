@@ -47,6 +47,9 @@ R2 is a technically plausible S3-compatible candidate for large media objects: i
 References:
 - https://developers.cloudflare.com/r2/pricing/
 - https://developers.cloudflare.com/r2/platform/limits/
+- https://developers.cloudflare.com/billing/understand/usage-based-billing/
+
+**Cost-control consequence:** Cloudflare documents spending limits for Workers and Durable Objects, but not as a hard R2 spending cap. Budget alerts are notifications, not a hard stop. Therefore FOX must enforce its own upload/storage/operation quotas and fail closed before crossing its configured free-tier budget; an alert alone is not sufficient to guarantee zero overage.
 
 No provider is selected in this audit. Before enabling any usage-based provider, FOX must have a credible application-level quota/reservation policy, visibility into account-level usage, and an explicit operational decision about what happens at the free-tier boundary. Do not silently allow overage.
 

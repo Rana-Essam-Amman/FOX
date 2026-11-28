@@ -280,11 +280,16 @@ class RedisTaskManager(TaskManager):
         thread.start()
 
     def _run_reserved_task(self, token: str, func, *args, **kwargs):
+        self._worker_context.slot_token = token
         # Extract task_id from the actual execution payload (kwargs preferred).
         task_id = kwargs.get("task_id") or (str(args[0]) if args else "")
         if not task_id:
             logger.error("reserved task missing task_id; releasing slot without execution")
-            self._release_slot(token)
+            # This reservation already incremented current_tasks in
+            # _start_reserved_task. Use the shared completion path so both the
+            # Redis lease and the process-local counter are released.
+            self.task_done()
+            self._worker_context.slot_token = None
             return
 
         handoff = GenerationHandoff(task_id)
@@ -293,7 +298,6 @@ class RedisTaskManager(TaskManager):
         kwargs["_generation_handoff"] = handoff
 
         stop_heartbeat = threading.Event()
-        self._worker_context.slot_token = token
         try:
             # Thread creation/start is part of worker admission. If it fails,
             # recover the never-started task and let the shared finally block

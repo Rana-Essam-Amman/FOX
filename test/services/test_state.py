@@ -117,6 +117,34 @@ class TestMemoryState(unittest.TestCase):
             current_generation.reset(token)
         self.assertEqual(state.get_task("owned")["progress"], 50)
 
+    def test_memory_generation_acquisition_is_idempotent_and_fenced(self):
+        state = MemoryState()
+        state.create_task("task-idempotent-generation")
+
+        first = state.acquire_generation(
+            "task-idempotent-generation", request_id="worker-a"
+        )
+        self.assertEqual(first, 1)
+        self.assertEqual(
+            state.acquire_generation(
+                "task-idempotent-generation", request_id="worker-a"
+            ),
+            1,
+        )
+        second = state.acquire_generation(
+            "task-idempotent-generation", request_id="worker-b"
+        )
+        self.assertEqual(second, 2)
+        # A delayed retry for the old request must not increment or adopt gen 2.
+        self.assertIsNone(
+            state.acquire_generation(
+                "task-idempotent-generation", request_id="worker-a"
+            )
+        )
+        self.assertEqual(
+            state.get_task("task-idempotent-generation")["generation"], 2
+        )
+
     def test_generation_acquisition_and_artifact_publication_are_fenced(self):
         state = MemoryState()
         state.create_task("task-generation")

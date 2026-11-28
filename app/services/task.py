@@ -2127,7 +2127,9 @@ def start(
     # by Redis and make behavior depend on the configured backend.
     generation = None
     try:
-        generation = sm.state.acquire_generation(task_id)
+        generation = sm.state.acquire_generation(
+            task_id, request_id=uuid4().hex
+        )
     except Exception as exc:
         logger.error(f"generation acquisition failed for {task_id}: {exc}")
         if _generation_handoff is not None:

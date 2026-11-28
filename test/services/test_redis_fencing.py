@@ -28,6 +28,67 @@ def test_acquire_generation_ordering(redis_client):
     assert get_generation(redis_client, task_id) == 3
 
 
+def test_idempotent_generation_acquisition_recovers_lost_reply(redis_client):
+    task_id = f"task-lost-reply-{uuid.uuid4().hex}"
+    redis_client.hset(task_id, mapping={"task_id": task_id, "state": "1"})
+
+    class LoseFirstReply:
+        def __init__(self, client):
+            self.client = client
+            self.calls = 0
+
+        def hget(self, *args):
+            return self.client.hget(*args)
+
+        def eval(self, *args):
+            self.calls += 1
+            result = self.client.eval(*args)
+            if self.calls == 1:
+                raise redis.exceptions.TimeoutError("simulated lost Redis reply")
+            return result
+
+    wrapped = LoseFirstReply(redis_client)
+    generation = acquire_generation(
+        wrapped, task_id, request_id=f"request-{uuid.uuid4().hex}"
+    )
+
+    assert generation == 1
+    assert wrapped.calls == 2
+    assert get_generation(redis_client, task_id) == 1
+
+
+def test_ambiguous_retry_cannot_take_over_a_competing_generation(redis_client):
+    task_id = f"task-competing-{uuid.uuid4().hex}"
+    redis_client.hset(task_id, mapping={"task_id": task_id, "state": "1"})
+
+    class CompetingAcquisitionAfterLostReply:
+        def __init__(self, client):
+            self.client = client
+            self.calls = 0
+
+        def hget(self, *args):
+            return self.client.hget(*args)
+
+        def eval(self, *args):
+            self.calls += 1
+            result = self.client.eval(*args)
+            if self.calls == 1:
+                assert acquire_generation(
+                    self.client, task_id, request_id="competing-worker"
+                ) == 2
+                raise redis.exceptions.TimeoutError("simulated lost Redis reply")
+            return result
+
+    wrapped = CompetingAcquisitionAfterLostReply(redis_client)
+    result = acquire_generation(
+        wrapped, task_id, request_id="original-worker"
+    )
+
+    assert result is None
+    assert wrapped.calls == 2
+    assert get_generation(redis_client, task_id) == 2
+
+
 def test_stale_generation_rejected(redis_client):
     task_id = "task-stale"
     redis_client.hset(task_id, mapping={"task_id": task_id, "state": "1"})

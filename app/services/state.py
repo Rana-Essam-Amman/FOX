@@ -160,8 +160,10 @@ class BaseState(ABC):
         pass
 
     @abstractmethod
-    def acquire_generation(self, task_id: str) -> int | None:
-        """Atomically acquire the next worker generation for an existing task."""
+    def acquire_generation(
+        self, task_id: str, request_id: str | None = None
+    ) -> int | None:
+        """Atomically acquire a generation; request_id makes retries idempotent."""
         pass
 
     @abstractmethod
@@ -185,6 +187,7 @@ class BaseState(ABC):
 class MemoryState(BaseState):
     def __init__(self):
         self._tasks = {}
+        self._generation_requests = {}
         self._lock = threading.RLock()
 
     def get_all_tasks(self, page: int, page_size: int):
@@ -287,12 +290,21 @@ class MemoryState(BaseState):
             }
         return True
 
-    def acquire_generation(self, task_id: str) -> int | None:
-        """Atomically increment the generation of an existing in-memory task."""
+    def acquire_generation(
+        self, task_id: str, request_id: str | None = None
+    ) -> int | None:
+        """Atomically acquire a generation, deduplicating a repeated request id."""
         with self._lock:
             task = self._tasks.get(task_id)
             if task is None:
                 return None
+            if request_id is not None:
+                if not isinstance(request_id, str) or not request_id:
+                    raise ValueError("request_id must be a non-empty string")
+                previous = self._generation_requests.get((task_id, request_id))
+                if previous is not None:
+                    current = _coerce_stored_generation(task.get("generation"))
+                    return previous if current == previous else None
             stored = _coerce_stored_generation(
                 task.get("generation", 0), allow_zero=True
             )
@@ -300,6 +312,8 @@ class MemoryState(BaseState):
                 return None
             generation = stored + 1
             task["generation"] = generation
+            if request_id is not None:
+                self._generation_requests[(task_id, request_id)] = generation
             return generation
 
     def publish_artifact_reference(
@@ -326,7 +340,13 @@ class MemoryState(BaseState):
     def authorized_delete(self, task_id: str) -> bool:
         """Delete only after the caller has completed route-level authorization."""
         with self._lock:
-            return self._tasks.pop(task_id, None) is not None
+            deleted = self._tasks.pop(task_id, None) is not None
+            self._generation_requests = {
+                key: value
+                for key, value in self._generation_requests.items()
+                if key[0] != task_id
+            }
+            return deleted
 
     def recovery_patch(self, task_id: str, expected_generation: int | None = None, **kwargs) -> bool:
         """Narrow recovery update for queue dequeue failures.
@@ -372,6 +392,11 @@ class MemoryState(BaseState):
     def delete_task(self, task_id: str):
         with self._lock:
             self._tasks.pop(task_id, None)
+            self._generation_requests = {
+                key: value
+                for key, value in self._generation_requests.items()
+                if key[0] != task_id
+            }
 
 
 # Redis state management
@@ -391,9 +416,11 @@ class RedisState(BaseState):
 
         self._redis = redis.StrictRedis(host=host, port=port, db=db, password=password)
 
-    def acquire_generation(self, task_id: str) -> int | None:
+    def acquire_generation(
+        self, task_id: str, request_id: str | None = None
+    ) -> int | None:
         from app.services.fencing import acquire_generation
-        return acquire_generation(self._redis, task_id)
+        return acquire_generation(self._redis, task_id, request_id=request_id)
 
     def publish_artifact_reference(
         self, task_id: str, field: str, artifact_reference, expected_generation: int | None
@@ -586,6 +613,7 @@ class RedisState(BaseState):
                 else self._convert_to_original_type(value)
             )
             for key, value in task_data.items()
+            if not key.startswith(b"_fox_internal_")
         }
         return task
 

@@ -6,10 +6,12 @@ authorize an object through the ownership store before reading or deleting it.
 
 from __future__ import annotations
 
+import io
 import os
 import tempfile
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import BinaryIO, Iterator, Protocol
 
@@ -75,8 +77,11 @@ class LocalFilesystemStorage:
     def put_stream(
         self, object_name: str, source: BinaryIO, expected_size: int | None = None
     ) -> StoredObjectInfo:
-        if expected_size is not None and expected_size < 0:
-            raise ValueError("expected_size must be non-negative")
+        if expected_size is not None and (
+            not isinstance(expected_size, int) or isinstance(expected_size, bool)
+            or expected_size < 0
+        ):
+            raise ValueError("expected_size must be a non-negative integer")
         target = self._object_path(object_name)
         target.parent.mkdir(parents=True, exist_ok=True)
         descriptor, temporary_name = tempfile.mkstemp(
@@ -110,8 +115,9 @@ class LocalFilesystemStorage:
                 pass
 
     def head(self, object_name: str) -> StoredObjectInfo:
-        stat_result = self._object_path(object_name).stat()
-        if not self._object_path(object_name).is_file():
+        path = self._object_path(object_name)
+        stat_result = path.stat()
+        if not path.is_file():
             raise FileNotFoundError(object_name)
         return StoredObjectInfo(
             size=stat_result.st_size,
@@ -129,6 +135,8 @@ class LocalFilesystemStorage:
             raise ValueError("invalid object byte range")
         path = self._object_path(object_name)
         size = path.stat().st_size
+        if size == 0 and start == 0 and end is None:
+            return iter(())
         if start >= size:
             raise ValueError("object byte range is not satisfiable")
         final_byte = size - 1 if end is None else min(end, size - 1)
@@ -150,28 +158,48 @@ class LocalFilesystemStorage:
     def delete(self, object_name: str) -> None:
         self._object_path(object_name).unlink(missing_ok=True)
 
-    def put_owned(self, user: AuthenticatedUser, content: bytes, content_type: str, request_id: str) -> str:
+    def put_owned(
+        self,
+        user: AuthenticatedUser,
+        content: bytes,
+        content_type: str,
+        request_id: str,
+    ) -> str:
         from app.security.storage import validate_upload
+
         validate_upload(content_type, len(content), request_id)
         material_id = uuid.uuid4().hex
-        ownership_store.create(
-            TaskOwnershipRecord(
-                task_id=material_id,
-                owner_id=user.sub,
-                created_at=__import__("datetime").datetime.now(__import__("datetime").timezone.utc),
-                kind="material",
-                metadata={"content_type": content_type, "size": len(content), "storage": "local"},
+        self.put_stream(material_id, io.BytesIO(content), expected_size=len(content))
+        try:
+            ownership_store.create(
+                TaskOwnershipRecord(
+                    task_id=material_id,
+                    owner_id=user.sub,
+                    created_at=datetime.now(timezone.utc),
+                    kind="material",
+                    metadata={
+                        "content_type": content_type,
+                        "size": len(content),
+                        "storage": "local",
+                    },
+                )
             )
-        )
-        path = self._object_path(material_id)
-        path.write_bytes(content)
+        except Exception:
+            self.delete(material_id)
+            raise
         return material_id
 
-    def get_owned(self, material_id: str, user: AuthenticatedUser, request_id: str) -> Path:
+    def get_owned(
+        self, material_id: str, user: AuthenticatedUser, request_id: str
+    ) -> Path:
         record = ownership_store.get(material_id)
         if record is None or record.owner_id != user.sub or record.kind != "material":
-            raise HttpException(task_id=request_id, status_code=404, message="material not found")
+            raise HttpException(
+                task_id=request_id, status_code=404, message="material not found"
+            )
         path = self._object_path(material_id)
         if not path.is_file():
-            raise HttpException(task_id=request_id, status_code=404, message="material not found")
+            raise HttpException(
+                task_id=request_id, status_code=404, message="material not found"
+            )
         return path

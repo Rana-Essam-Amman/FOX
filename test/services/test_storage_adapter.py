@@ -76,3 +76,27 @@ def test_delete_is_idempotent_and_head_reports_missing_object(tmp_path):
 
     with pytest.raises(FileNotFoundError):
         storage.head("material.bin")
+
+ 
+ 
+def test_iter_read_returns_empty_bytes_for_empty_object(tmp_path):
+    storage = LocalFilesystemStorage(str(tmp_path))
+    storage.put_stream("empty.bin", io.BytesIO(b""), 0)
+
+    assert list(storage.iter_read("empty.bin")) == []
+
+
+def test_object_path_rejects_symlink_escape(tmp_path):
+    storage = LocalFilesystemStorage(str(tmp_path / "storage"))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    link = storage.base / "outside-link"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks are unavailable on this platform")
+
+    with pytest.raises(ValueError, match="invalid object name"):
+        storage.put_stream("outside-link/escape.bin", io.BytesIO(b"x"), 1)
+
+    assert not (outside / "escape.bin").exists()

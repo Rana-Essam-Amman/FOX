@@ -525,6 +525,22 @@ class TestRedisState(unittest.TestCase):
         state._redis = _FakeRedis(batches)
         return state
 
+    def test_get_task_hides_internal_generation_metadata(self):
+        state = self._build_state([1])
+        state._redis.data[b"task:0"].update(
+            {
+                b"generation": b"1",
+                b"_fox_internal_generation_request_id": b"private-request-id",
+                b"_fox_internal_generation_request_value": b"1",
+            }
+        )
+
+        task = state.get_task("task:0")
+
+        self.assertEqual(task["generation"], 1)
+        self.assertNotIn("_fox_internal_generation_request_id", task)
+        self.assertNotIn("_fox_internal_generation_request_value", task)
+
     def test_get_all_tasks_paginates_across_scan_batches(self):
         """
         Redis SCAN 分批返回 key 时，分页必须按任务键的稳定顺序切片。

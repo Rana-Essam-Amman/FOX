@@ -83,3 +83,31 @@ def test_generation_acquisition_failure_marks_api_task_failed():
         error="GenerationAcquisitionError: Redis unavailable",
     )
     client.zrem.assert_called_once_with(manager.running_slots_key, "reserved-slot")
+
+def test_heartbeat_start_failure_marks_task_failed_and_releases_slot():
+    manager, client = make_manager()
+    client.eval.return_value = None
+    client.lpop.return_value = None
+    worker = MagicMock()
+    thread = MagicMock()
+    thread.start.side_effect = RuntimeError("thread resources exhausted")
+
+    with (
+        patch("app.controllers.manager.redis_manager.sm.state") as state,
+        patch("app.controllers.manager.redis_manager.threading.Thread", return_value=thread),
+    ):
+        manager._run_reserved_task(
+            "reserved-slot",
+            worker,
+            task_id="heartbeat-start-failed",
+        )
+
+    worker.assert_not_called()
+    state.recovery_patch.assert_called_once_with(
+        "heartbeat-start-failed",
+        expected_generation=None,
+        state=const.TASK_STATE_FAILED,
+        failed_stage="worker_startup",
+        error="RuntimeError: thread resources exhausted",
+    )
+    client.zrem.assert_called_once_with(manager.running_slots_key, "reserved-slot")

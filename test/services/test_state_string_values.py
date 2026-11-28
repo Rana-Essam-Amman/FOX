@@ -127,3 +127,23 @@ def test_redis_worker_mutations_reject_invalid_generation_tokens(invalid_generat
     stored = state.get_task("invalid-generation-token")
     assert stored["progress"] == 0
     assert "error" not in stored
+
+
+
+@pytest.mark.parametrize("error_value", ["None", "False", "2026", "[]"])
+def test_redis_recovery_patch_preserves_literal_looking_error_strings(error_value):
+    state = RedisState.__new__(RedisState)
+    state._redis = _FencedFakeRedis([[]])
+    state.create_task("recovery-literal")
+    generation = state.acquire_generation("recovery-literal")
+
+    assert state.recovery_patch(
+        "recovery-literal",
+        expected_generation=generation,
+        state=const.TASK_STATE_FAILED,
+        failed_stage="recovery",
+        error=error_value,
+    )
+    task = state.get_task("recovery-literal")
+    assert task["error"] == error_value
+    assert task["failed_stage"] == "recovery"

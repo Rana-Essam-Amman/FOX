@@ -66,7 +66,6 @@ def test_generation_acquisition_failure_marks_api_task_failed():
             return_value=None,
         ),
         patch.object(manager, "_renew_slot_until_done"),
-        patch.object(manager, "task_done"),
     ):
         manager._run_reserved_task(
             "reserved-slot",

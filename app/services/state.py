@@ -473,10 +473,10 @@ class RedisState(BaseState):
         }
 
         expected = generation if generation is not None else current_generation.get()
-        if expected is None or expected < 1:
-            # Worker mutations require a valid generation. No unfenced fallback.
+        from app.services.fencing import compare_and_write, is_valid_generation
+        if not is_valid_generation(expected):
+            # Worker mutations require a positive integer generation. No unfenced fallback.
             return False
-        from app.services.fencing import compare_and_write
         success = compare_and_write(
             self._redis,
             task_id,
@@ -589,9 +589,9 @@ class RedisState(BaseState):
         if not kwargs:
             return False
         expected = generation if generation is not None else current_generation.get()
-        if expected is None or expected < 1:
+        from app.services.fencing import compare_and_write, is_valid_generation
+        if not is_valid_generation(expected):
             return False
-        from app.services.fencing import compare_and_write
         fields = {
             field: self._serialize_field(field, value)
             for field, value in kwargs.items()

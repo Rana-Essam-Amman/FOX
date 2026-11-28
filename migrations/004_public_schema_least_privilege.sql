@@ -23,14 +23,14 @@ GRANT EXECUTE
     ON FUNCTION public.cleanup_expired_rate_limits()
     TO service_role;
 
--- Supabase's project defaults may grant newly created public objects to
--- anon/authenticated. Revoke those defaults for the migration owner so future
--- internal tables/functions remain inaccessible until explicitly granted.
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+-- Supabase defaults may grant newly created public objects to anon/authenticated.
+-- Revoke defaults for the migration executor so future objects remain private
+-- until an explicit grant is added in a reviewed migration.
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
     REVOKE ALL ON TABLES FROM anon, authenticated, service_role;
 
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
     REVOKE ALL ON SEQUENCES FROM anon, authenticated, service_role;
 
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
     REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, anon, authenticated, service_role;

@@ -10,7 +10,7 @@ from unittest.mock import Mock
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from app.models import const
-from app.services.state import MemoryState, RedisState
+from app.services.state import MemoryState, RedisState, current_generation
 
 
 class _FakeRedisPipeline:
@@ -99,16 +99,133 @@ class _FakeRedis:
 
 
 class TestMemoryState(unittest.TestCase):
+    def test_update_task_requires_generation_and_never_creates_records(self):
+        state = MemoryState()
+        self.assertFalse(state.update_task("unfenced", progress=25))
+        self.assertIsNone(state.get_task("unfenced"))
+
+        self.assertTrue(state.create_task("owned", progress=10))
+        self.assertFalse(state.create_task("owned", progress=99))
+        self.assertEqual(state.get_task("owned")["progress"], 10)
+        self.assertFalse(state.update_task("owned", progress=50))
+
+        self.assertEqual(state.acquire_generation("owned"), 1)
+        token = current_generation.set(1)
+        try:
+            self.assertTrue(state.update_task("owned", progress=50))
+        finally:
+            current_generation.reset(token)
+        self.assertEqual(state.get_task("owned")["progress"], 50)
+
+    def test_memory_generation_acquisition_is_idempotent_and_fenced(self):
+        state = MemoryState()
+        state.create_task("task-idempotent-generation")
+
+        first = state.acquire_generation(
+            "task-idempotent-generation", request_id="worker-a"
+        )
+        self.assertEqual(first, 1)
+        self.assertEqual(
+            state.acquire_generation(
+                "task-idempotent-generation", request_id="worker-a"
+            ),
+            1,
+        )
+        second = state.acquire_generation(
+            "task-idempotent-generation", request_id="worker-b"
+        )
+        self.assertEqual(second, 2)
+        # A delayed retry for the old request must not increment or adopt gen 2.
+        self.assertIsNone(
+            state.acquire_generation(
+                "task-idempotent-generation", request_id="worker-a"
+            )
+        )
+        self.assertEqual(
+            state.get_task("task-idempotent-generation")["generation"], 2
+        )
+
+    def test_generation_acquisition_and_artifact_publication_are_fenced(self):
+        state = MemoryState()
+        state.create_task("task-generation")
+
+        first = state.acquire_generation("task-generation")
+        self.assertEqual(first, 1)
+        self.assertTrue(
+            state.publish_artifact_reference(
+                "task-generation", "videos", ["first.mp4"], first
+            )
+        )
+
+        second = state.acquire_generation("task-generation")
+        self.assertEqual(second, 2)
+        self.assertFalse(
+            state.publish_artifact_reference(
+                "task-generation", "videos", ["stale.mp4"], first
+            )
+        )
+        self.assertTrue(
+            state.publish_artifact_reference(
+                "task-generation", "videos", ["second.mp4"], second
+            )
+        )
+        self.assertEqual(
+            state.get_task("task-generation")["videos"], ["second.mp4"]
+        )
+
+    def test_memory_mutations_reject_boolean_stored_generation(self):
+        state = MemoryState()
+        self.assertTrue(state.create_task("boolean-generation", generation=True))
+        token = current_generation.set(1)
+        try:
+            self.assertFalse(state.update_task("boolean-generation", progress=50))
+            self.assertFalse(state.patch_task("boolean-generation", value="bad"))
+            self.assertFalse(
+                state.publish_artifact_reference(
+                    "boolean-generation", "videos", ["bad.mp4"], 1
+                )
+            )
+        finally:
+            current_generation.reset(token)
+        self.assertIsNone(state.acquire_generation("boolean-generation"))
+        self.assertNotIn("videos", state.get_task("boolean-generation"))
+
+    def test_memory_worker_updates_reject_stale_generation(self):
+        state = MemoryState()
+        state.create_task("task-stale-worker")
+        first = state.acquire_generation("task-stale-worker")
+        token = current_generation.set(first)
+        try:
+            self.assertTrue(state.update_task("task-stale-worker", progress=25))
+            self.assertEqual(
+                state.acquire_generation("task-stale-worker"), first + 1
+            )
+            self.assertFalse(state.update_task("task-stale-worker", progress=90))
+        finally:
+            current_generation.reset(token)
+
+        self.assertEqual(
+            state.get_task("task-stale-worker")["progress"], 25
+        )
+
+    def test_authorized_delete_removes_memory_task(self):
+        state = MemoryState()
+        state.create_task("task-delete")
+        self.assertTrue(state.authorized_delete("task-delete"))
+        self.assertFalse(state.authorized_delete("task-delete"))
+        self.assertIsNone(state.get_task("task-delete"))
+
     def test_progress_update_preserves_existing_task_details(self):
         state = MemoryState()
-        state.update_task(
+        state.create_task(
             "task-1",
             state=const.TASK_STATE_PROCESSING,
+            generation=1,
             video_subject="A day in Shanghai",
             material_sources=["source.mp4"],
         )
 
-        state.update_task("task-1", progress=25)
+        state.update_task("task-1", generation=1, progress=25)
 
         task = state.get_task("task-1")
         self.assertEqual(task["progress"], 25)
@@ -117,7 +234,7 @@ class TestMemoryState(unittest.TestCase):
 
     def test_get_task_and_get_all_tasks_return_isolated_snapshots(self):
         state = MemoryState()
-        state.update_task(
+        state.create_task(
             "task-1",
             state=const.TASK_STATE_PROCESSING,
             progress=25,
@@ -146,8 +263,8 @@ class TestMemoryState(unittest.TestCase):
 
         state = MemoryState()
         off_page = CopyTracked()
-        state.update_task("task-1", videos=["first.mp4"])
-        state.update_task("task-2", payload=off_page)
+        state.create_task("task-1", videos=["first.mp4"])
+        state.create_task("task-2", payload=off_page)
         # Input values are snapshotted on update; track the stored payload
         # so this test measures only copies made by pagination.
         off_page = state._tasks["task-2"]["payload"]
@@ -170,35 +287,35 @@ class TestMemoryState(unittest.TestCase):
         self.assertFalse(state.recovery_patch("missing", state=-1, error="gone"))
 
         # Never-started (absent generation) + None is permitted.
-        state.update_task("never", state=const.TASK_STATE_PROCESSING)
+        state.create_task("never", state=const.TASK_STATE_PROCESSING)
         self.assertTrue(
             state.recovery_patch("never", expected_generation=None, state=-1, error="ok")
         )
         self.assertEqual(state.get_task("never")["state"], -1)
 
         # Absent generation + positive expected is rejected.
-        state.update_task("absent", state=const.TASK_STATE_PROCESSING)
+        state.create_task("absent", state=const.TASK_STATE_PROCESSING)
         self.assertFalse(
             state.recovery_patch("absent", expected_generation=1, state=-1, error="no")
         )
         self.assertEqual(state.get_task("absent")["state"], const.TASK_STATE_PROCESSING)
 
         # Exact match is permitted.
-        state.update_task("match", state=const.TASK_STATE_PROCESSING, generation=1)
+        state.create_task("match", state=const.TASK_STATE_PROCESSING, generation=1)
         self.assertTrue(
             state.recovery_patch("match", expected_generation=1, state=-1, error="ok")
         )
         self.assertEqual(state.get_task("match")["state"], -1)
 
         # Stale generation is rejected.
-        state.update_task("stale", state=const.TASK_STATE_PROCESSING, generation=2)
+        state.create_task("stale", state=const.TASK_STATE_PROCESSING, generation=2)
         self.assertFalse(
             state.recovery_patch("stale", expected_generation=1, state=-1, error="no")
         )
         self.assertEqual(state.get_task("stale")["state"], const.TASK_STATE_PROCESSING)
 
         # Zero / negative expected are rejected.
-        state.update_task("zero", state=const.TASK_STATE_PROCESSING, generation=1)
+        state.create_task("zero", state=const.TASK_STATE_PROCESSING, generation=1)
         self.assertFalse(
             state.recovery_patch("zero", expected_generation=0, state=-1, error="no")
         )
@@ -208,7 +325,7 @@ class TestMemoryState(unittest.TestCase):
         self.assertEqual(state.get_task("zero")["state"], const.TASK_STATE_PROCESSING)
 
         # Absent + zero is rejected.
-        state.update_task("absent-zero", state=const.TASK_STATE_PROCESSING)
+        state.create_task("absent-zero", state=const.TASK_STATE_PROCESSING)
         self.assertFalse(
             state.recovery_patch("absent-zero", expected_generation=0, state=-1, error="no")
         )
@@ -220,7 +337,7 @@ class TestMemoryState(unittest.TestCase):
         )
 
         # Boolean expected_generation is rejected (True is not generation 1).
-        state.update_task("bool", state=const.TASK_STATE_PROCESSING, generation=1)
+        state.create_task("bool", state=const.TASK_STATE_PROCESSING, generation=1)
         self.assertFalse(
             state.recovery_patch("bool", expected_generation=True, state=-1, error="no")
         )
@@ -230,7 +347,7 @@ class TestMemoryState(unittest.TestCase):
         self.assertEqual(state.get_task("bool")["state"], const.TASK_STATE_PROCESSING)
 
         # Malformed stored generation fails closed.
-        state.update_task("malformed", state=const.TASK_STATE_PROCESSING, generation="invalid")
+        state.create_task("malformed", state=const.TASK_STATE_PROCESSING, generation="invalid")
         self.assertFalse(
             state.recovery_patch("malformed", expected_generation=1, state=-1, error="no")
         )
@@ -246,45 +363,45 @@ class TestMemoryState(unittest.TestCase):
         self.assertEqual(state.get_task("bool")["state"], const.TASK_STATE_PROCESSING)
 
         # Stored boolean generations are rejected (True is not generation 1).
-        state.update_task("stored-true", state=const.TASK_STATE_PROCESSING, generation=True)
+        state.create_task("stored-true", state=const.TASK_STATE_PROCESSING, generation=True)
         self.assertFalse(
             state.recovery_patch("stored-true", expected_generation=1, state=-1, error="no")
         )
         self.assertEqual(state.get_task("stored-true")["state"], const.TASK_STATE_PROCESSING)
-        state.update_task("stored-false", state=const.TASK_STATE_PROCESSING, generation=False)
+        state.create_task("stored-false", state=const.TASK_STATE_PROCESSING, generation=False)
         self.assertFalse(
             state.recovery_patch("stored-false", expected_generation=1, state=-1, error="no")
         )
         self.assertEqual(state.get_task("stored-false")["state"], const.TASK_STATE_PROCESSING)
 
         # Fractional stored generation is rejected (no truncation).
-        state.update_task("frac", state=const.TASK_STATE_PROCESSING, generation=1.5)
+        state.create_task("frac", state=const.TASK_STATE_PROCESSING, generation=1.5)
         self.assertFalse(
             state.recovery_patch("frac", expected_generation=1, state=-1, error="no")
         )
         self.assertEqual(state.get_task("frac")["state"], const.TASK_STATE_PROCESSING)
 
         # Exact integer-valued float is accepted for Redis tonumber parity.
-        state.update_task("float-int", state=const.TASK_STATE_PROCESSING, generation=1.0)
+        state.create_task("float-int", state=const.TASK_STATE_PROCESSING, generation=1.0)
         self.assertTrue(
             state.recovery_patch("float-int", expected_generation=1, state=-1, error="ok")
         )
         self.assertEqual(state.get_task("float-int")["state"], -1)
 
         # Pure integer string is accepted.
-        state.update_task("str-int", state=const.TASK_STATE_PROCESSING, generation="1")
+        state.create_task("str-int", state=const.TASK_STATE_PROCESSING, generation="1")
         self.assertTrue(
             state.recovery_patch("str-int", expected_generation=1, state=-1, error="ok")
         )
         self.assertEqual(state.get_task("str-int")["state"], -1)
 
         # Malformed strings and unsupported objects are rejected.
-        state.update_task("bad-str", state=const.TASK_STATE_PROCESSING, generation="1.5")
+        state.create_task("bad-str", state=const.TASK_STATE_PROCESSING, generation="1.5")
         self.assertFalse(
             state.recovery_patch("bad-str", expected_generation=1, state=-1, error="no")
         )
         self.assertEqual(state.get_task("bad-str")["state"], const.TASK_STATE_PROCESSING)
-        state.update_task("obj", state=const.TASK_STATE_PROCESSING, generation=object())
+        state.create_task("obj", state=const.TASK_STATE_PROCESSING, generation=object())
         self.assertFalse(
             state.recovery_patch("obj", expected_generation=1, state=-1, error="no")
         )
@@ -297,7 +414,7 @@ class TestMemoryState(unittest.TestCase):
 
         def update_tasks(thread_index):
             for task_index in range(tasks_per_thread):
-                state.update_task(
+                state.create_task(
                     f"task-{thread_index}-{task_index}",
                     state=const.TASK_STATE_PROCESSING,
                     progress=task_index,
@@ -320,15 +437,17 @@ class TestMemoryState(unittest.TestCase):
     def test_patch_task_preserves_generated_outputs(self):
         """异步发布更新不能覆盖已经完成的视频任务字段。"""
         state = MemoryState()
-        state.update_task(
+        state.create_task(
             "task-1",
             state=const.TASK_STATE_COMPLETE,
             progress=100,
+            generation=1,
             videos=["final.mp4"],
         )
 
         patched = state.patch_task(
             "task-1",
+            generation=1,
             cross_post_state=const.CROSS_POST_STATE_COMPLETE,
             cross_post_results=[{"success": True}],
         )
@@ -340,12 +459,15 @@ class TestMemoryState(unittest.TestCase):
                 "task_id": "task-1",
                 "state": const.TASK_STATE_COMPLETE,
                 "progress": 100,
+                "generation": 1,
                 "videos": ["final.mp4"],
                 "cross_post_state": const.CROSS_POST_STATE_COMPLETE,
                 "cross_post_results": [{"success": True}],
             },
         )
-        self.assertFalse(state.patch_task("missing", value="ignored"))
+        self.assertFalse(state.patch_task("missing", generation=1, value="ignored"))
+        self.assertFalse(state.patch_task("task-1", generation=2, value="stale"))
+        self.assertFalse(state.patch_task("task-1", value="unfenced"))
 
 
 class TestRedisState(unittest.TestCase):
@@ -364,21 +486,26 @@ class TestRedisState(unittest.TestCase):
         state._redis.hset.assert_not_called()
         state._redis.eval.assert_not_called()
 
-    def test_create_task_writes_all_fields_in_one_redis_command(self):
-        """Initial create_task still uses a single hset for the full mapping."""
+    def test_create_task_uses_atomic_create_script(self):
+        """Initial creation must not overwrite an existing Redis key."""
         state = RedisState.__new__(RedisState)
         state._redis = Mock()
+        state._redis.eval.return_value = 1
 
-        state.create_task(
+        self.assertTrue(state.create_task(
             "task-1",
             state=const.TASK_STATE_COMPLETE,
             progress=120,
             videos=["final.mp4"],
-        )
+        ))
 
-        state._redis.hset.assert_called_once_with(
-            "task-1",
-            mapping={
+        call = state._redis.eval.call_args
+        self.assertEqual(call.args[1:3], (1, "task-1"))
+        self.assertIn('EXISTS', call.args[0])
+        mapping = dict(zip(call.args[3::2], call.args[4::2]))
+        self.assertEqual(
+            mapping,
+            {
                 "task_id": "task-1",
                 "state": str(const.TASK_STATE_COMPLETE),
                 "progress": "100",
@@ -397,6 +524,22 @@ class TestRedisState(unittest.TestCase):
         state = RedisState.__new__(RedisState)
         state._redis = _FakeRedis(batches)
         return state
+
+    def test_get_task_hides_internal_generation_metadata(self):
+        state = self._build_state([1])
+        state._redis.data[b"task:0"].update(
+            {
+                b"generation": b"1",
+                b"_fox_internal_generation_request_id": b"private-request-id",
+                b"_fox_internal_generation_request_value": b"1",
+            }
+        )
+
+        task = state.get_task("task:0")
+
+        self.assertEqual(task["generation"], 1)
+        self.assertNotIn("_fox_internal_generation_request_id", task)
+        self.assertNotIn("_fox_internal_generation_request_value", task)
 
     def test_get_all_tasks_paginates_across_scan_batches(self):
         """
@@ -483,7 +626,7 @@ class TestRedisState(unittest.TestCase):
 
         try:
             for task_id in task_ids:
-                state.update_task(
+                state.create_task(
                     task_id,
                     state=const.TASK_STATE_COMPLETE,
                     progress=100,
@@ -512,7 +655,7 @@ class TestRedisState(unittest.TestCase):
         task_ids = [f"ci-page-{uuid.uuid4()}-{index}" for index in range(13)]
         try:
             for task_id in reversed(task_ids):
-                state.update_task(task_id, state=const.TASK_STATE_COMPLETE)
+                state.create_task(task_id, state=const.TASK_STATE_COMPLETE)
 
             all_tasks = []
             page = 1
@@ -565,23 +708,25 @@ class TestRedisState(unittest.TestCase):
 
         for _ in range(50):
             task_id = f"ci-atomic-{uuid.uuid4()}"
-            state.update_task(
+            state.create_task(
                 task_id,
                 state=const.TASK_STATE_COMPLETE,
                 progress=100,
             )
+            generation = state.acquire_generation(task_id)
             barrier = threading.Barrier(2)
 
             def patch_task():
                 barrier.wait()
                 state.patch_task(
                     task_id,
+                    generation=generation,
                     cross_post_state=const.CROSS_POST_STATE_COMPLETE,
                 )
 
             def delete_task():
                 barrier.wait()
-                state.delete_task(task_id)
+                state.delete_task(task_id, generation=generation)
 
             # Future.result() 会把工作线程异常重新抛到测试线程，避免 Redis
             # 命令实际失败但仅打印线程异常、最终仍被误判为测试通过。

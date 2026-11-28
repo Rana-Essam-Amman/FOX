@@ -48,7 +48,7 @@ from app.services.terminal_guard import complete_if_owner as _complete_if_owner_
 from app.utils import file_security, utils
 from app.utils.subtitle_writer import staged_subtitle_file
 
-from app.services.fencing import acquire_generation, artifact_path_for_generation as _artifact_path_for_generation, cleanup_generation_artifacts as _cleanup_generation_artifacts
+from app.services.fencing import artifact_path_for_generation as _artifact_path_for_generation, cleanup_generation_artifacts as _cleanup_generation_artifacts
 
 def _complete_if_owner(task_id: str, **kwargs) -> bool:
     """Mark COMPLETE only if we still own the lease and generation.
@@ -326,7 +326,7 @@ def _mark_task_failed(
     # return value used by the CLI. These fields are reset before a new attempt.
     failure_details = {
         key: existing_task[key]
-        for key in ("error_key", "error_params", "videos", "combined_videos", "warnings", "failed_video_index",
+        for key in ("error_key", "error_params", "videos", "combined_videos", "warnings", "failed_video_index", "generation",
                     "generation_activity", "generation_started_at", "generation_submitted_at")
         if existing_task and key in existing_task
     }
@@ -334,17 +334,33 @@ def _mark_task_failed(
         key: value for key, value in dict(details or {}).items() if key not in failure
     })
     failure.update(failure_details)
-    fields = {key: value for key, value in failure.items() if key != "task_id"}
+    # The generation stored on the task is output data, never proof that
+    # this worker owns it. A stale worker must use only its own context token;
+    # adopting the generation read from Redis would let it overwrite a newer run.
+    expected_generation = current_generation.get()
+    fields = {
+        key: value
+        for key, value in failure.items()
+        if key not in {"task_id", "generation"}
+    }
     write_ok = False
     for attempt in range(_TASK_FAILURE_STATE_WRITE_ATTEMPTS):
         try:
             if attempt == 0:
-                write_ok = bool(sm.state.update_task(task_id, **fields))
+                write_ok = bool(
+                    sm.state.update_task(
+                        task_id, generation=expected_generation, **fields
+                    )
+                )
             else:
                 # A lost acknowledgement may mean the first write succeeded.
                 # Patch only an existing record so retries cannot revive a task
                 # that the user has since deleted.
-                write_ok = bool(sm.state.patch_task(task_id, **fields))
+                write_ok = bool(
+                    sm.state.patch_task(
+                        task_id, generation=expected_generation, **fields
+                    )
+                )
             if write_ok:
                 break
             # Generation rejected; do not retry unfenced.
@@ -1220,9 +1236,7 @@ def generate_final_videos(
         final_video_paths.append(final_video_path)
         combined_video_paths.append(combined_video_path)
         # Publish the complete list atomically under our generation.
-        from app.services.fencing import publish_artifact_reference
-        if not publish_artifact_reference(
-            sm.state._redis if hasattr(sm.state, "_redis") else None,
+        if not sm.state.publish_artifact_reference(
             task_id,
             "videos",
             list(final_video_paths),
@@ -1240,11 +1254,13 @@ def generate_final_videos(
     return final_video_paths, combined_video_paths, warnings
 
 
-def _patch_cross_post_state(task_id: str, **kwargs) -> bool | None:
-    """安全更新发布字段；短暂状态后端故障时有限重试。"""
+def _patch_cross_post_state(
+    task_id: str, *, generation: int | None = None, **kwargs
+) -> bool | None:
+    """安全更新发布字段；每次写入都绑定任务代次。"""
     for attempt in range(1, _CROSS_POST_STATE_WRITE_ATTEMPTS + 1):
         try:
-            return sm.state.patch_task(task_id, **kwargs)
+            return sm.state.patch_task(task_id, generation=generation, **kwargs)
         except Exception as exc:
             # Redis 短暂断连不应让任务永久停留在 pending/processing。发布状态
             # 写入频率很低，这里使用固定次数和短等待即可覆盖瞬时故障，同时
@@ -1270,10 +1286,13 @@ def _record_cross_post_failure(
     task_id: str,
     error: Exception,
     results: list[dict] | None = None,
+    *,
+    generation: int | None = None,
 ) -> None:
     """尽最大努力保存发布失败；状态后端不可用时由日志保留诊断信息。"""
     updated = _patch_cross_post_state(
         task_id,
+        generation=generation,
         cross_post_state=const.CROSS_POST_STATE_FAILED,
         cross_post_results=results or None,
         cross_post_error=str(error),
@@ -1283,7 +1302,9 @@ def _record_cross_post_failure(
         logger.warning(f"discard cross-post failure for missing task: {task_id}")
 
 
-def _ensure_cross_post_terminal_state(task_id: str) -> None:
+def _ensure_cross_post_terminal_state(
+    task_id: str, generation: int | None = None
+) -> None:
     """Future 结束后把仍处于活动态的任务收敛为失败。"""
     try:
         task = sm.state.get_task(task_id)
@@ -1306,6 +1327,7 @@ def _ensure_cross_post_terminal_state(task_id: str) -> None:
         task_id,
         RuntimeError("cross-post worker ended without persisting a terminal state"),
         task.get("cross_post_results"),
+        generation=generation,
     )
 
 
@@ -1334,8 +1356,19 @@ def recover_interrupted_cross_posts(page_size: int = 100) -> int | None:
             ):
                 continue
 
+            task_generation = task.get("generation")
+            if (
+                isinstance(task_generation, bool)
+                or not isinstance(task_generation, int)
+                or task_generation < 1
+            ):
+                logger.warning(
+                    f"skip recovery for task without valid generation: {task_id}"
+                )
+                continue
             updated = _patch_cross_post_state(
                 task_id,
+                generation=task_generation,
                 cross_post_state=const.CROSS_POST_STATE_FAILED,
                 cross_post_error=_INTERRUPTED_CROSS_POST_ERROR,
                 cross_post_owner=None,
@@ -1523,7 +1556,9 @@ def _run_cross_post_with_slot(*args) -> None:
         _cross_post_slots.release()
 
 
-def _finalize_cross_post_future(task_id: str, future: Future) -> None:
+def _finalize_cross_post_future(
+    task_id: str, future: Future, generation: int | None = None
+) -> None:
     """清理 Future 注册，并确保取消、异常和状态写入失败都能收敛。"""
     _unregister_cross_post_future(task_id, future)
 
@@ -1537,13 +1572,14 @@ def _finalize_cross_post_future(task_id: str, future: Future) -> None:
         _record_cross_post_failure(
             task_id,
             RuntimeError("cross-post job was cancelled before execution"),
+            generation=generation,
         )
         return
     except Exception as exc:
         logger.exception(
             f"failed to inspect cross-post future, task_id: {task_id}, error: {exc}"
         )
-        _ensure_cross_post_terminal_state(task_id)
+        _ensure_cross_post_terminal_state(task_id, generation=generation)
         return
 
     if error is not None:
@@ -1552,7 +1588,7 @@ def _finalize_cross_post_future(task_id: str, future: Future) -> None:
             f"error: {type(error).__name__}: {error}"
         )
 
-    _ensure_cross_post_terminal_state(task_id)
+    _ensure_cross_post_terminal_state(task_id, generation=generation)
 
 
 def _schedule_cross_post(
@@ -1596,7 +1632,10 @@ def _schedule_cross_post(
             upload_post.upload_post_service.snapshot_account(),
         )
         _register_cross_post_future(task_id, future)
-        future.add_done_callback(partial(_finalize_cross_post_future, task_id))
+        generation = current_generation.get()
+        future.add_done_callback(
+            partial(_finalize_cross_post_future, task_id, generation=generation)
+        )
     except RuntimeError as exc:
         _unregister_cross_post_future(task_id)
         _cross_post_slots.release()
@@ -2059,7 +2098,7 @@ def _run_pipeline(
 
 
 class GenerationAcquisitionError(RuntimeError):
-    """Raised when a Redis-backed worker cannot acquire a fencing generation."""
+    """Raised when a worker cannot acquire a valid fencing generation."""
 
 
 def start(
@@ -2082,24 +2121,30 @@ def start(
     ``allow_server_file_input`` 只供本机 CLI 使用。HTTP API 和 WebUI 必须保持
     默认值，让自定义音频始终受当前任务目录约束。
     """
-    # Acquire a new fencing generation before any pipeline work.
-    # Redis-backed execution must obtain a valid generation or fail closed.
-    is_redis = hasattr(sm.state, "_redis")
+    # Every backend must return a real positive generation. API, WebUI and CLI
+    # create the task record before starting the worker; allowing an in-memory
+    # worker to run without one would bypass the same fencing contract enforced
+    # by Redis and make behavior depend on the configured backend.
     generation = None
-    if is_redis:
-        try:
-            generation = acquire_generation(sm.state._redis, task_id)
-        except Exception as exc:
-            logger.error(f"generation acquisition failed for {task_id}: {exc}")
-            if _generation_handoff is not None:
-                _generation_handoff.fail()
-            raise GenerationAcquisitionError(f"failed to acquire generation: {exc}") from exc
-        if generation is None or generation < 1:
-            if _generation_handoff is not None:
-                _generation_handoff.fail()
-            raise GenerationAcquisitionError(
-                f"acquire_generation returned invalid value {generation!r} for {task_id}"
-            )
+    try:
+        generation = sm.state.acquire_generation(
+            task_id, request_id=uuid4().hex
+        )
+    except Exception as exc:
+        logger.error(f"generation acquisition failed for {task_id}: {exc}")
+        if _generation_handoff is not None:
+            _generation_handoff.fail()
+        raise GenerationAcquisitionError(f"failed to acquire generation: {exc}") from exc
+    if (
+        isinstance(generation, bool)
+        or not isinstance(generation, int)
+        or generation < 1
+    ):
+        if _generation_handoff is not None:
+            _generation_handoff.fail()
+        raise GenerationAcquisitionError(
+            f"acquire_generation returned invalid value {generation!r} for {task_id}"
+        )
     # Publish to heartbeat before pipeline work. Heartbeat waits on this.
     if _generation_handoff is not None:
         _generation_handoff.publish(generation)
@@ -2108,7 +2153,7 @@ def start(
         lease_token = None
     token = current_generation.set(generation)
     try:
-        with generation_progress.task_scope(task_id):
+        with generation_progress.task_scope(task_id, generation=generation):
             try:
                 return _run_pipeline(
                     task_id,
@@ -2145,10 +2190,18 @@ def start(
 
 
 if __name__ == "__main__":
-    task_id = "task_id"
+    task_id = str(uuid4())
     params = VideoParams(
         video_subject="金钱的作用",
         voice_name="zh-CN-XiaoyiNeural-Female",
         voice_rate=1.0,
     )
-    start(task_id, params, stop_at="video")
+    if sm.state.create_task(
+        task_id,
+        state=const.TASK_STATE_PROCESSING,
+        progress=0,
+        video_subject=params.video_subject,
+    ):
+        start(task_id, params, stop_at="video")
+    else:
+        raise RuntimeError(f"could not create task record: {task_id}")

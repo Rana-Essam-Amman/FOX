@@ -26,7 +26,7 @@ def _oidc_verifier(monkeypatch):
 
 def test_concurrent_task_deletions_do_not_return_server_error():
     state = MemoryState()
-    state.update_task('task-1', state=const.TASK_STATE_COMPLETE)
+    state.create_task('task-1', state=const.TASK_STATE_COMPLETE)
     with TemporaryDirectory() as directory:
         target = Path(directory, 'task-1')
         target.mkdir()
@@ -66,7 +66,7 @@ def test_concurrent_task_deletions_do_not_return_server_error():
 @pytest.mark.parametrize('error', [PermissionError('denied'), OSError('disk failure'), FileNotFoundError('child disappeared')])
 def test_delete_preserves_state_when_directory_still_exists(error):
     state = MemoryState()
-    state.update_task('task-1', state=const.TASK_STATE_COMPLETE)
+    state.create_task('task-1', state=const.TASK_STATE_COMPLETE)
     with TemporaryDirectory() as directory:
         target = Path(directory, 'task-1')
         target.mkdir()

@@ -1258,11 +1258,15 @@ def combine_videos(
                 candidate_index += 1
             if not batch:
                 break
-            # Propagate fencing generation (and any other ContextVars) into clip workers.
-            ctx = contextvars.copy_context()
-            def _run_in_context(item):
-                return ctx.run(process_clip_in_task_scope, item)
-            for processed_clip in executor.map(_run_in_context, batch):
+            # Each worker needs its own Context copy. A single Context cannot be
+            # entered concurrently by multiple executor threads.
+            batch_contexts = [(contextvars.copy_context(), item) for item in batch]
+
+            def _run_in_context(context_and_item):
+                context, item = context_and_item
+                return context.run(process_clip_in_task_scope, item)
+
+            for processed_clip in executor.map(_run_in_context, batch_contexts):
                 if processed_clip is None:
                     continue
                 processed_clips.append(processed_clip)

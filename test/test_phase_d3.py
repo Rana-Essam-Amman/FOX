@@ -1,6 +1,8 @@
 """Phase D3 free-tier Supabase integration tests."""
 
 import os
+from pathlib import Path
+
 import pytest
 
 from app.security.config_validation import validate_production_config, ProductionConfigError
@@ -36,3 +38,16 @@ def test_supabase_storage_ownership_check():
     from app.security.adapters.supabase_storage import SupabaseStorageAdapter
     with pytest.raises(RuntimeError):
         SupabaseStorageAdapter(url="", service_key="")
+
+
+def test_rate_limit_counters_are_service_role_only_under_rls():
+    migration = Path(__file__).resolve().parents[1] / "migrations" / "003_rls_policies.sql"
+    sql = migration.read_text(encoding="utf-8")
+    marker = "ALTER TABLE rate_limit_counters ENABLE ROW LEVEL SECURITY;"
+    assert marker in sql
+    rate_limit_policy = sql.split(marker, 1)[1]
+    assert "CREATE POLICY rate_limit_counters_service_all" in rate_limit_policy
+    assert "FOR ALL" in rate_limit_policy
+    assert "TO service_role" in rate_limit_policy
+    assert "TO authenticated" not in rate_limit_policy
+    assert "TO anon" not in rate_limit_policy

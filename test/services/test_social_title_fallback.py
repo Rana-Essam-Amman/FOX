@@ -5,11 +5,12 @@ from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
 from app.config import config
 from app.controllers.v1 import llm as llm_controller
 from app.services import llm
+from app.security import jwt_auth
+from test.services._oidc_test_authority import authed_client, shared_authority
 
 
 @pytest.mark.parametrize("failure", ["missing_key", "invalid_json", "exception"])
@@ -80,9 +81,9 @@ def test_social_metadata_api_missing_key_uses_first_sentence(script, expected):
     app.include_router(llm_controller.router)
     with (
         patch.object(config, "app", {"llm_provider": "openai", "openai_api_key": ""}),
-        TestClient(app) as client,
+        patch.object(jwt_auth, "jwt_verifier", shared_authority().verifier()),
     ):
-        response = client.post(
+        response = authed_client(app).post(
             "/api/v1/social-metadata",
             json={"video_subject": "", "video_script": script},
         )

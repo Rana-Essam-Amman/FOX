@@ -5,6 +5,7 @@ Requires DATABASE_URL. Does not fall back to memory.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import os
 from app.security.ownership import TaskOwnershipRecord, TaskOwnershipStore
@@ -21,8 +22,14 @@ class PostgresOwnershipStore(TaskOwnershipStore):
         except ImportError as exc:
             raise RuntimeError("psycopg2 is required for the PostgreSQL adapter") from exc
 
+    @contextmanager
     def _conn(self):
-        return self._driver.connect(self.dsn)
+        connection = self._driver.connect(self.dsn)
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
     def create(self, record: TaskOwnershipRecord) -> None:
         with self._conn() as conn:

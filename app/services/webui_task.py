@@ -169,10 +169,10 @@ def _run_generation(
             "failed_stage": "webui_worker",
             "error": error,
         }
-        sm.state.update_task(
+        sm.state.recovery_patch(
             task_id,
+            expected_generation=None,
             state=failure["state"],
-            progress=failure["progress"],
             failed_stage=failure["failed_stage"],
             error=failure["error"],
         )
@@ -296,7 +296,7 @@ def _enqueue_generation(
     codex_image_context=None,
 ):
     submitted_at = time.time()
-    sm.state.update_task(
+    created = sm.state.create_task(
         task_id,
         state=const.TASK_STATE_PROCESSING,
         progress=0,
@@ -305,6 +305,8 @@ def _enqueue_generation(
         generation_activity={"phase": "queued", "started_at": submitted_at,
                              "updated_at": submitted_at},
     )
+    if not created:
+        raise RuntimeError(f"task already exists: {task_id}")
     try:
         _task_manager.add_task(
             _run_generation,
@@ -325,10 +327,10 @@ def _enqueue_generation(
         # 调度失败与流水线失败一样必须成为可查询状态，避免任务管理器永久显示
         # “生成中”。保留异常类型便于从 Docker 或本机日志快速定位队列问题。
         error = f"{type(exc).__name__}: {exc}"
-        sm.state.update_task(
+        sm.state.recovery_patch(
             task_id,
+            expected_generation=None,
             state=const.TASK_STATE_FAILED,
-            progress=0,
             failed_stage="scheduling",
             error=error,
         )

@@ -60,6 +60,29 @@ def test_authorize_accepts_user_policy():
     assert grant.policy == POLICY_USER
 
 
+def test_recovery_rejects_invalid_or_zero_generation(redis_client):
+    client, created = redis_client
+    state = RedisState(host="localhost", port=6379, db=5)
+    state._redis = client
+
+    never_started = "test-recovery-invalid-explicit-generation"
+    created.append(never_started)
+    state.create_task(never_started)
+    for invalid in (0, -1, False, True):
+        assert state.recovery_patch(
+            never_started, expected_generation=invalid, state=-1
+        ) is False
+    assert state.get_task(never_started)["state"] != -1
+
+    malformed = "test-recovery-stored-zero-generation"
+    created.append(malformed)
+    state.create_task(malformed, generation=0)
+    assert state.recovery_patch(
+        malformed, expected_generation=None, state=-1
+    ) is False
+    assert state.get_task(malformed)["state"] != -1
+
+
 def test_recovery_requires_generation(redis_client):
     client, created = redis_client
     task_id = "test-recovery"
@@ -67,10 +90,11 @@ def test_recovery_requires_generation(redis_client):
     state = RedisState(host="localhost", port=6379, db=5)
     state._redis = client
     state.create_task(task_id)
-    # No generation: fail closed
+    # Once a worker has started, recovery must carry its exact generation.
+    g = acquire_generation(client, task_id)
+    # No generation: fail closed for an already-started task.
     assert state.recovery_patch(task_id, state=-1, error="stale") is False
     # With wrong generation: fail closed
-    g = acquire_generation(client, task_id)
     assert state.recovery_patch(task_id, expected_generation=g + 99, state=-1) is False
     # With correct generation: succeeds
     assert state.recovery_patch(task_id, expected_generation=g, state=-1, error="real") is True

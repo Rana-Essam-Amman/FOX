@@ -1,5 +1,6 @@
 import ast
 import copy
+import math
 import threading
 from abc import ABC, abstractmethod
 from contextvars import ContextVar
@@ -9,6 +10,17 @@ from itertools import islice
 
 from app.config import config
 from app.models import const
+
+
+_CREATE_TASK_SCRIPT = """
+if redis.call("EXISTS", KEYS[1]) ~= 0 then
+    return 0
+end
+for i = 1, #ARGV, 2 do
+    redis.call("HSET", KEYS[1], ARGV[i], ARGV[i + 1])
+end
+return 1
+"""
 
 
 _PATCH_EXISTING_TASK_SCRIPT = """
@@ -38,7 +50,9 @@ if tid ~= ARGV[1] then
     return 0
 end
 local gen = redis.call('HGET', key, 'generation')
-if gen and gen ~= '' and gen ~= '0' then
+-- No-generation recovery is only for records where the field is truly absent.
+-- Empty or zero-valued generations are malformed/invalid, not "never started".
+if gen then
     return 0
 end
 for i = 2, #ARGV, 2 do
@@ -65,10 +79,64 @@ return redis.call("DEL", KEYS[1])
 # use this value when no explicit generation is supplied.
 current_generation: ContextVar[int | None] = ContextVar("current_generation", default=None)
 
+
+def _coerce_stored_generation(value, *, allow_zero: bool = False) -> int | None:
+    """Parse only finite integer-valued generations; bool is never a generation."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, float):
+        if not math.isfinite(value) or not value.is_integer():
+            return None
+        parsed = int(value)
+    elif isinstance(value, str):
+        try:
+            numeric = float(value)
+        except ValueError:
+            return None
+        if not math.isfinite(numeric) or not numeric.is_integer():
+            return None
+        parsed = int(numeric)
+    else:
+        return None
+    if parsed < (0 if allow_zero else 1):
+        return None
+    return parsed
+
+
 # Base class for state management
 class BaseState(ABC):
     @abstractmethod
-    def update_task(self, task_id: str, state: int, progress: int = 0, **kwargs):
+    def create_task(
+        self,
+        task_id: str,
+        state: int = const.TASK_STATE_PROCESSING,
+        progress: int = 0,
+        **kwargs,
+    ) -> bool:
+        """Create a new task record without requiring a worker generation."""
+        pass
+
+    @abstractmethod
+    def recovery_patch(
+        self,
+        task_id: str,
+        expected_generation: int | None = None,
+        **kwargs,
+    ) -> bool:
+        """Apply the narrow recovery transition for a task that has not started."""
+        pass
+
+    @abstractmethod
+    def update_task(
+        self,
+        task_id: str,
+        state: int,
+        progress: int = 0,
+        generation: int | None = None,
+        **kwargs,
+    ):
         pass
 
     @abstractmethod
@@ -85,8 +153,33 @@ class BaseState(ABC):
         pass
 
     @abstractmethod
-    def patch_task(self, task_id: str, **kwargs) -> bool:
-        """只更新已有任务的指定字段；任务不存在时返回 False。"""
+    def patch_task(
+        self, task_id: str, generation: int | None = None, **kwargs
+    ) -> bool:
+        """Patch an existing task only while the caller owns its generation."""
+        pass
+
+    @abstractmethod
+    def acquire_generation(
+        self, task_id: str, request_id: str | None = None
+    ) -> int | None:
+        """Atomically acquire a generation; request_id makes retries idempotent."""
+        pass
+
+    @abstractmethod
+    def publish_artifact_reference(
+        self,
+        task_id: str,
+        field: str,
+        artifact_reference,
+        expected_generation: int | None,
+    ) -> bool:
+        """Publish an artifact reference only while the caller owns the generation."""
+        pass
+
+    @abstractmethod
+    def authorized_delete(self, task_id: str) -> bool:
+        """Delete a task after the route has verified the caller's ownership."""
         pass
 
 
@@ -94,6 +187,7 @@ class BaseState(ABC):
 class MemoryState(BaseState):
     def __init__(self):
         self._tasks = {}
+        self._generation_requests = {}
         self._lock = threading.RLock()
 
     def get_all_tasks(self, page: int, page_size: int):
@@ -116,18 +210,36 @@ class MemoryState(BaseState):
         task_id: str,
         state: int = const.TASK_STATE_PROCESSING,
         progress: int = 0,
+        generation: int | None = None,
         **kwargs,
     ):
         progress = int(progress)
         if progress > 100:
             progress = 100
 
+        expected_generation = (
+            generation if generation is not None else current_generation.get()
+        )
+        if (
+            isinstance(expected_generation, bool)
+            or not isinstance(expected_generation, int)
+            or expected_generation < 1
+        ):
+            return False
+
         with self._lock:
+            existing = self._tasks.get(task_id)
+            if (
+                existing is None
+                or _coerce_stored_generation(existing.get("generation"))
+                != expected_generation
+            ):
+                return False
             self._tasks[task_id] = {
                 # Keep fields from earlier pipeline stages, matching Redis
                 # HSET updates. A progress-only update must not erase the
                 # WebUI subject or diagnostic details already stored.
-                **self._tasks.get(task_id, {}),
+                **existing,
                 "task_id": task_id,
                 "state": state,
                 "progress": progress,
@@ -140,20 +252,103 @@ class MemoryState(BaseState):
             task = self._tasks.get(task_id, None)
             return copy.deepcopy(task) if task is not None else None
 
-    def patch_task(self, task_id: str, **kwargs) -> bool:
-        # 异步发布只应补充发布状态，不能覆盖已经保存的视频、字幕等结果。
-        # 在同一把锁内完成存在性判断和字段合并，也可避免任务删除后
-        # 被后台线程重建。
+    def patch_task(
+        self, task_id: str, generation: int | None = None, **kwargs
+    ) -> bool:
+        # Match RedisState: worker-originated patches must retain generation
+        # ownership. The context is copied into cross-post worker threads.
+        expected = generation if generation is not None else current_generation.get()
+        if (
+            isinstance(expected, bool)
+            or not isinstance(expected, int)
+            or expected < 1
+        ):
+            return False
         with self._lock:
             task = self._tasks.get(task_id)
-            if task is None:
+            if (
+                task is None
+                or _coerce_stored_generation(task.get("generation")) != expected
+            ):
                 return False
             task.update(copy.deepcopy(kwargs))
             return True
 
     def create_task(self, task_id: str, state: int = const.TASK_STATE_PROCESSING, progress: int = 0, **kwargs) -> bool:
-        """Initial creation for in-memory execution. Always succeeds if called."""
-        return self.update_task(task_id, state=state, progress=progress, **kwargs)
+        """Create an initial task record without crossing the worker mutation boundary."""
+        progress = int(progress)
+        if progress > 100:
+            progress = 100
+        with self._lock:
+            if task_id in self._tasks:
+                return False
+            self._tasks[task_id] = {
+                "task_id": task_id,
+                "state": state,
+                "progress": progress,
+                **copy.deepcopy(kwargs),
+            }
+        return True
+
+    def acquire_generation(
+        self, task_id: str, request_id: str | None = None
+    ) -> int | None:
+        """Atomically acquire a generation, deduplicating a repeated request id."""
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                return None
+            if request_id is not None:
+                if not isinstance(request_id, str) or not request_id:
+                    raise ValueError("request_id must be a non-empty string")
+                previous = self._generation_requests.get((task_id, request_id))
+                if previous is not None:
+                    current = _coerce_stored_generation(task.get("generation"))
+                    return previous if current == previous else None
+            stored = _coerce_stored_generation(
+                task.get("generation", 0), allow_zero=True
+            )
+            if stored is None:
+                return None
+            generation = stored + 1
+            task["generation"] = generation
+            if request_id is not None:
+                # Retain request IDs for this task until deletion: an arbitrarily
+                # delayed retry must remain fenced after a newer worker acquires.
+                self._generation_requests[(task_id, request_id)] = generation
+            return generation
+
+    def publish_artifact_reference(
+        self, task_id: str, field: str, artifact_reference, expected_generation: int | None
+    ) -> bool:
+        """Atomically publish only while the task still has this generation."""
+        if (
+            isinstance(expected_generation, bool)
+            or not isinstance(expected_generation, int)
+            or expected_generation < 1
+        ):
+            return False
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if (
+                task is None
+                or _coerce_stored_generation(task.get("generation"))
+                != expected_generation
+            ):
+                return False
+            task[field] = copy.deepcopy(artifact_reference)
+            return True
+
+    def authorized_delete(self, task_id: str) -> bool:
+        """Delete only after the caller has completed route-level authorization."""
+        with self._lock:
+            deleted = self._tasks.pop(task_id, None) is not None
+            self._generation_requests = {
+                key: value
+                for key, value in self._generation_requests.items()
+                if key[0] != task_id
+            }
+            return deleted
 
     def recovery_patch(self, task_id: str, expected_generation: int | None = None, **kwargs) -> bool:
         """Narrow recovery update for queue dequeue failures.
@@ -187,32 +382,11 @@ class MemoryState(BaseState):
                 # Booleans (True/False), non-integers, zero, negative: fail closed.
                 return False
             else:
-                # Exact match required. Reject booleans, fractions, and malformed
-                # values without lossy int() truncation. Redis uses tonumber +
-                # numeric equality; we require a true integer representation.
-                if stored_gen is None or isinstance(stored_gen, bool):
-                    return False
-                try:
-                    if isinstance(stored_gen, str):
-                        # Accept only pure integer strings (no fractional part).
-                        if not stored_gen.lstrip("-").isdigit():
-                            return False
-                        stored_as_int = int(stored_gen)
-                    elif isinstance(stored_gen, int):
-                        stored_as_int = stored_gen
-                    elif isinstance(stored_gen, float):
-                        # Reject non-integral floats (1.5); accept only exact
-                        # integer-valued floats if we choose Redis parity.
-                        # Redis tonumber("1.0") == 1, so we accept only when
-                        # the float is exactly integral.
-                        if not stored_gen.is_integer():
-                            return False
-                        stored_as_int = int(stored_gen)
-                    else:
-                        return False
-                    if stored_as_int != expected_generation:
-                        return False
-                except (TypeError, ValueError):
+                # Exact match required. Use the same numeric-integer parsing as
+                # Redis Lua tonumber/equality, while rejecting bool and fractions.
+                if (
+                    _coerce_stored_generation(stored_gen) != expected_generation
+                ):
                     return False
             task.update(copy.deepcopy(kwargs))
             return True
@@ -220,6 +394,7 @@ class MemoryState(BaseState):
     def delete_task(self, task_id: str):
         with self._lock:
             self._tasks.pop(task_id, None)
+            self._generation_requests.pop(task_id, None)
 
 
 # Redis state management
@@ -238,6 +413,20 @@ class RedisState(BaseState):
         import redis
 
         self._redis = redis.StrictRedis(host=host, port=port, db=db, password=password)
+
+    def acquire_generation(
+        self, task_id: str, request_id: str | None = None
+    ) -> int | None:
+        from app.services.fencing import acquire_generation
+        return acquire_generation(self._redis, task_id, request_id=request_id)
+
+    def publish_artifact_reference(
+        self, task_id: str, field: str, artifact_reference, expected_generation: int | None
+    ) -> bool:
+        from app.services.fencing import publish_artifact_reference
+        return publish_artifact_reference(
+            self._redis, task_id, field, artifact_reference, expected_generation
+        )
 
     def get_all_tasks(self, page: int, page_size: int):
         start = (page - 1) * page_size
@@ -309,10 +498,10 @@ class RedisState(BaseState):
         }
 
         expected = generation if generation is not None else current_generation.get()
-        if expected is None or expected < 1:
-            # Worker mutations require a valid generation. No unfenced fallback.
+        from app.services.fencing import compare_and_write, is_valid_generation
+        if not is_valid_generation(expected):
+            # Worker mutations require a positive integer generation. No unfenced fallback.
             return False
-        from app.services.fencing import compare_and_write
         success = compare_and_write(
             self._redis,
             task_id,
@@ -336,14 +525,16 @@ class RedisState(BaseState):
             "progress": progress,
             **kwargs,
         }
-        self._redis.hset(
-            task_id,
-            mapping={
-                field: self._serialize_field(field, value)
-                for field, value in fields.items()
-            },
-        )
-        return True
+        mapping = {
+            field: self._serialize_field(field, value)
+            for field, value in fields.items()
+        }
+        args = []
+        for field, value in mapping.items():
+            args.extend((field, value))
+        return bool(self._redis.eval(
+            _CREATE_TASK_SCRIPT, 1, task_id, *args
+        ))
 
     def authorized_delete(self, task_id: str) -> bool:
         """Explicit deletion after route-level ownership authorization.
@@ -370,18 +561,30 @@ class RedisState(BaseState):
             return False
         from app.services.fencing import compare_and_write
         try:
-            if expected_generation is not None and expected_generation >= 1:
-                return bool(compare_and_write(
-                    self._redis, task_id, expected_generation, kwargs
+            if expected_generation is None:
+                # Atomic recovery is permitted only for never-started records.
+                # The Lua script requires the generation field to be absent.
+                args = [task_id]
+                for k, v in kwargs.items():
+                    args.append(k)
+                    args.append(self._serialize_field(k, v))
+                return bool(self._redis.eval(
+                    _ATOMIC_NO_GEN_RECOVERY_SCRIPT, 1, task_id, *args
                 ))
-            # Atomic no-generation recovery: Lua verifies key, task_id, and
-            # that generation is still absent, then writes. No TOCTOU window.
-            args = [task_id]
-            for k, v in kwargs.items():
-                args.append(k)
-                args.append(self._serialize_field(k, v))
-            return bool(self._redis.eval(
-                _ATOMIC_NO_GEN_RECOVERY_SCRIPT, 1, task_id, *args
+            # An explicitly supplied generation must be a positive integer.
+            # Do not let 0/False/negative values fall through to no-gen recovery.
+            if (
+                isinstance(expected_generation, bool)
+                or not isinstance(expected_generation, int)
+                or expected_generation < 1
+            ):
+                return False
+            serialized_fields = {
+                field: self._serialize_field(field, value)
+                for field, value in kwargs.items()
+            }
+            return bool(compare_and_write(
+                self._redis, task_id, expected_generation, serialized_fields
             ))
         except Exception:
             return False
@@ -408,6 +611,7 @@ class RedisState(BaseState):
                 else self._convert_to_original_type(value)
             )
             for key, value in task_data.items()
+            if not key.startswith(b"_fox_internal_")
         }
         return task
 
@@ -415,9 +619,9 @@ class RedisState(BaseState):
         if not kwargs:
             return False
         expected = generation if generation is not None else current_generation.get()
-        if expected is None or expected < 1:
+        from app.services.fencing import compare_and_write, is_valid_generation
+        if not is_valid_generation(expected):
             return False
-        from app.services.fencing import compare_and_write
         fields = {
             field: self._serialize_field(field, value)
             for field, value in kwargs.items()
@@ -427,10 +631,14 @@ class RedisState(BaseState):
     def delete_task(self, task_id: str, generation: int | None = None) -> bool:
         """Worker-originated delete. Requires valid generation. Returns actual result."""
         expected = generation if generation is not None else current_generation.get()
-        if expected is None or expected < 1:
+        from app.services.fencing import is_valid_generation
+        if not is_valid_generation(expected):
             return False
         script = """
         if redis.call("TYPE", KEYS[1]).ok ~= "hash" then
+            return 0
+        end
+        if redis.call("HGET", KEYS[1], "task_id") ~= KEYS[1] then
             return 0
         end
         local current = redis.call("HGET", KEYS[1], "generation")

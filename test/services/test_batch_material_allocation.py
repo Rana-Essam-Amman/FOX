@@ -6,6 +6,7 @@ import pytest
 
 from app.models.schema import VideoParams
 from app.services import task, video
+from app.services.state import MemoryState
 
 
 class FakeClip:
@@ -43,6 +44,10 @@ def render_batch(tmp_path):
             voice_name=voice_name,
         )
         writes = 0
+        state = MemoryState()
+        assert state.create_task(task_id)
+        generation = state.acquire_generation(task_id)
+        generation_token = task.current_generation.set(generation)
 
         def write_clip(*args, **kwargs):
             nonlocal writes
@@ -59,12 +64,15 @@ def render_batch(tmp_path):
             patch.object(video, "concat_video_clips_with_ffmpeg"),
             patch.object(video, "delete_files"),
             patch.object(video, "generate_video") as final_render,
-            patch.object(task.sm.state, "update_task"),
+            patch.object(task.sm, "state", new=state),
         ):
-            result = task.generate_final_videos(
-                task_id, params, list(sources), "audio.mp3",
-                "subtitle.srt" if subtitle_enabled else "", duration,
-            )
+            try:
+                result = task.generate_final_videos(
+                    task_id, params, list(sources), "audio.mp3",
+                    "subtitle.srt" if subtitle_enabled else "", duration,
+                )
+            finally:
+                task.current_generation.reset(generation_token)
         return SimpleNamespace(
             selections=json.loads(manifest.read_text()).get("material_selections", []),
             warnings=result[2], outputs=result[0], final_render=final_render,

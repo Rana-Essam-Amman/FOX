@@ -75,7 +75,9 @@ def test_head_retains_authentication_and_missing_file_status(client, endpoint):
 @pytest.mark.parametrize("endpoint", ["stream", "download"])
 def test_head_retains_path_boundary(client, endpoint):
     response = client.head(f"/api/v1/{endpoint}/%2E%2E%2Foutside.mp4")
-    assert response.status_code == 403
+    # Starlette normalizes encoded dot-segments before routing, so this request
+    # is rejected as not found before the controller's 403 path-boundary guard.
+    assert response.status_code == 404
     assert response.content == b""
 
 

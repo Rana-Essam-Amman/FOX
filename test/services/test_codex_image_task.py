@@ -157,8 +157,13 @@ def test_translatable_failure_is_persisted_and_returned_consistently(tmp_path):
     from app.services.state import MemoryState
     state = MemoryState()
     with patch.object(task.sm, "state", state):
-        state.update_task("translated", state=task.const.TASK_STATE_PROCESSING, error_key=None, error_params=None)
-        result = task._mark_task_failed("translated", "materials", "sanitized", details={"error_key": "codex.oauth.http_error", "error_params": {"status": 403}})
+        state.create_task("translated", state=task.const.TASK_STATE_PROCESSING, error_key=None, error_params=None)
+        generation = state.acquire_generation("translated")
+        token = task.current_generation.set(generation)
+        try:
+            result = task._mark_task_failed("translated", "materials", "sanitized", details={"error_key": "codex.oauth.http_error", "error_params": {"status": 403}})
+        finally:
+            task.current_generation.reset(token)
         assert result == state.get_task("translated")
         assert result["error_key"] == "codex.oauth.http_error"
         assert result["error_params"] == {"status": 403}

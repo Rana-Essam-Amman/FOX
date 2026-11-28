@@ -6,8 +6,9 @@ No Redis. No process-local fallback. Requires DATABASE_URL.
 
 from __future__ import annotations
 
-import os
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+import os
 
 from app.models.exception import HttpException
 from app.security.jwt_auth import AuthenticatedUser
@@ -26,8 +27,14 @@ class PostgresRateLimiter:
         except ImportError as exc:
             raise RuntimeError("psycopg2 is required") from exc
 
+    @contextmanager
     def _conn(self):
-        return self._driver.connect(self.dsn)
+        connection = self._driver.connect(self.dsn)
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
     def check_request(self, user: AuthenticatedUser, request_id: str) -> None:
         self._incr(f"req:{user.sub}", 60, self.config.requests_per_minute, request_id)

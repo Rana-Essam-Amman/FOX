@@ -3,6 +3,7 @@
 
 import pytest
 
+from app.config import config
 from app.security.runtime import create_ownership_store, create_rate_limiter, create_storage
 from app.security.ownership import InMemoryOwnershipStore
 from app.security.config_validation import ProductionConfigError
@@ -11,6 +12,7 @@ from app.security.config_validation import ProductionConfigError
 def test_production_selects_postgres_and_supabase(monkeypatch):
     pytest.importorskip("psycopg2")
     monkeypatch.setenv("FOX_ENV", "production")
+    monkeypatch.setitem(config.app, "enable_redis", True)
     monkeypatch.setenv("FOX_OIDC_ISSUER", "https://example.supabase.co/auth/v1")
     monkeypatch.setenv("FOX_OIDC_AUDIENCE", "authenticated")
     monkeypatch.setenv("FOX_OIDC_JWKS_URL", "https://example.supabase.co/auth/v1/.well-known/jwks.json")

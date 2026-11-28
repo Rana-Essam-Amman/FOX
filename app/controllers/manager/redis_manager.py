@@ -280,11 +280,16 @@ class RedisTaskManager(TaskManager):
         thread.start()
 
     def _run_reserved_task(self, token: str, func, *args, **kwargs):
+        self._worker_context.slot_token = token
         # Extract task_id from the actual execution payload (kwargs preferred).
         task_id = kwargs.get("task_id") or (str(args[0]) if args else "")
         if not task_id:
             logger.error("reserved task missing task_id; releasing slot without execution")
-            self._release_slot(token)
+            # This reservation already incremented current_tasks in
+            # _start_reserved_task. Use the shared completion path so both the
+            # Redis lease and the process-local counter are released.
+            self.task_done()
+            self._worker_context.slot_token = None
             return
 
         handoff = GenerationHandoff(task_id)
@@ -293,14 +298,41 @@ class RedisTaskManager(TaskManager):
         kwargs["_generation_handoff"] = handoff
 
         stop_heartbeat = threading.Event()
-        heartbeat = threading.Thread(
-            target=self._renew_slot_until_done,
-            args=(token, stop_heartbeat, handoff),
-            daemon=True,
-        )
-        heartbeat.start()
-        self._worker_context.slot_token = token
         try:
+            # Thread creation/start is part of worker admission. If it fails,
+            # recover the never-started task and let the shared finally block
+            # release its reserved Redis slot.
+            try:
+                heartbeat = threading.Thread(
+                    target=self._renew_slot_until_done,
+                    args=(token, stop_heartbeat, handoff),
+                    daemon=True,
+                )
+                heartbeat.start()
+            except Exception as exc:
+                logger.exception(
+                    f"failed to start worker heartbeat for {task_id}: {exc}"
+                )
+                handoff.fail()
+                try:
+                    recovered = sm.state.recovery_patch(
+                        task_id,
+                        expected_generation=None,
+                        state=const.TASK_STATE_FAILED,
+                        failed_stage="worker_startup",
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
+                    if not recovered:
+                        logger.error(
+                            f"worker startup recovery rejected for {task_id}"
+                        )
+                except Exception as recovery_exc:
+                    logger.error(
+                        f"worker startup recovery failed for {task_id}: "
+                        f"{recovery_exc}"
+                    )
+                return
+
             # Durable ownership authorization before any material or provider access.
             # Fail closed on missing record, mismatch, or store error.
             from app.security.task_execution import authorize_task_execution, ExecutionDenied
@@ -339,7 +371,34 @@ class RedisTaskManager(TaskManager):
                 except Exception as rec_exc:
                     logger.error(f"ownership-store-error recovery raised for {task_id}: {rec_exc}")
                 return
-            func(*args, **kwargs)
+            try:
+                func(*args, **kwargs)
+            except tm.GenerationAcquisitionError as exc:
+                # start() deliberately raises before entering its pipeline when
+                # no fencing generation can be acquired. Without this boundary
+                # recovery, the already-created API task remains PROCESSING
+                # forever even though its reserved worker slot is released.
+                logger.exception(
+                    f"worker could not acquire task generation, "
+                    f"task_id={task_id}, error={exc}"
+                )
+                try:
+                    recovered = sm.state.recovery_patch(
+                        task_id,
+                        expected_generation=None,
+                        state=const.TASK_STATE_FAILED,
+                        failed_stage="generation_acquisition",
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
+                    if not recovered:
+                        logger.error(
+                            f"generation acquisition recovery rejected for {task_id}"
+                        )
+                except Exception as recovery_exc:
+                    logger.error(
+                        f"generation acquisition recovery failed for {task_id}: "
+                        f"{recovery_exc}"
+                    )
         finally:
             stop_heartbeat.set()
             if not handoff.ready.is_set():

@@ -1,6 +1,7 @@
 """验证儿童受众声明的配置、任务快照和真实 HTTP 表单编码，不连接外部平台。"""
 
 from concurrent.futures import Future
+from contextlib import contextmanager
 from email.parser import BytesParser
 from email.policy import default
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -15,6 +16,20 @@ from app.models.schema import VideoParams
 from app.services import task
 from app.services.state import MemoryState
 from app.services.upload_post import UploadPostService
+
+
+@contextmanager
+def _worker_generation():
+    token = task.current_generation.set(1)
+    try:
+        yield
+    finally:
+        task.current_generation.reset(token)
+
+
+def _schedule_with_generation(*args):
+    with _worker_generation():
+        return task._schedule_cross_post(*args)
 
 
 @pytest.fixture
@@ -101,7 +116,11 @@ def test_queued_audience_survives_config_change(upload_config, selected):
     """延迟执行真实工作函数，验证队列等待期间配置变化不会串到已提交任务。"""
     upload_config["upload_post_youtube_made_for_kids"] = selected
     state = MemoryState()
-    state.update_task("audience-snapshot", state=task.const.TASK_STATE_COMPLETE)
+    state.create_task(
+        "audience-snapshot",
+        state=task.const.TASK_STATE_COMPLETE,
+        generation=1,
+    )
     future = Future()
     with (
         patch.object(task.sm, "state", state),
@@ -115,7 +134,7 @@ def test_queued_audience_survives_config_change(upload_config, selected):
         ) as upload,
     ):
         assert (
-            task._schedule_cross_post(
+            _schedule_with_generation(
                 "audience-snapshot",
                 ["one.mp4", "two.mp4"],
                 VideoParams(video_subject="test"),

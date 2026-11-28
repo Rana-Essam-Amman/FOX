@@ -22,10 +22,14 @@ def test_patch_does_not_mutate_non_task_redis_keys(redis_state, kind):
             client.rpush(key, "queued-task")
             before = client.lrange(key, 0, -1)
         else:
-            client.hset(key, mapping={"foreign_field": "untouched", **({"task_id": "another-task"} if kind == "mismatched_marker" else {})})
+            client.hset(key, mapping={
+                "foreign_field": "untouched",
+                "generation": "1",
+                **({"task_id": "another-task"} if kind == "mismatched_marker" else {}),
+            })
             before = client.hgetall(key)
         assert redis_state.get_task(key) is None
-        assert redis_state.patch_task(key, progress=50) is False
+        assert redis_state.patch_task(key, generation=1, progress=50) is False
         assert (client.lrange(key, 0, -1) if kind == "queue" else client.hgetall(key)) == before
     finally:
         client.delete(key)
@@ -34,13 +38,19 @@ def test_patch_does_not_mutate_non_task_redis_keys(redis_state, kind):
 def test_owned_task_patch_preserves_fields_and_missing_task_stays_missing(redis_state):
     key = "ci-patch-positive-" + str(uuid4())
     try:
-        redis_state.update_task(key, state=1, progress=10, narration="keep")
-        assert redis_state.patch_task(key, progress=50) is True
+        redis_state.create_task(key, state=1, progress=10, narration="keep")
+        generation = redis_state.acquire_generation(key)
+        assert generation == 1
+        assert redis_state.patch_task(
+            key, generation=generation, progress=50
+        ) is True
         task = redis_state.get_task(key)
         assert task["narration"] == "keep"
         assert task["progress"] == 50
-        redis_state.delete_task(key)
-        assert redis_state.patch_task(key, progress=99) is False
+        redis_state.authorized_delete(key)
+        assert redis_state.patch_task(
+            key, generation=generation, progress=99
+        ) is False
         assert not redis_state._redis.exists(key)
     finally:
         redis_state._redis.delete(key)

@@ -17,6 +17,8 @@ class TestPartialBatchResults(unittest.TestCase):
         self, directory, state, fail_at=None, failure_stage="render", stop_at="video",
     ):
         task_id = "partial-batch"
+        if state.get_task(task_id) is None:
+            state.create_task(task_id)
         task_directory = Path(directory) / task_id
         task_directory.mkdir(exist_ok=True)
         params = VideoParams(
@@ -26,7 +28,7 @@ class TestPartialBatchResults(unittest.TestCase):
         checkpoints = []
 
         def combine(**kwargs):
-            index = int(Path(kwargs["combined_video_path"]).stem.split("-")[-1])
+            index = int(Path(kwargs["combined_video_path"]).stem.split("-")[-1].split(".")[0])
             checkpoints.append(state.get_task(task_id))
             if index == fail_at and failure_stage == "combine":
                 raise OSError("simulated combine failure")
@@ -36,7 +38,7 @@ class TestPartialBatchResults(unittest.TestCase):
 
         def render(**kwargs):
             output = Path(kwargs["output_file"])
-            index = int(output.stem.split("-")[-1])
+            index = int(output.stem.split("-")[-1].split(".")[0])
             if index == fail_at and failure_stage == "render":
                 # A leftover file must not be discovered as a completed result.
                 output.write_bytes(b"incomplete encoder output")
@@ -74,12 +76,12 @@ class TestPartialBatchResults(unittest.TestCase):
                     state = MemoryState()
                     result, _ = self._run_batch(directory, state, fail_at, stage)
                     expected_videos = [
-                        os.path.join(directory, "partial-batch", f"final-{index}.mp4")
+                        os.path.join(directory, "partial-batch", f"final-{index}.gen1.mp4")
                         for index in range(1, fail_at)
                     ]
                     self.assertEqual(result["videos"], expected_videos)
                     self.assertEqual(result["combined_videos"], [
-                        os.path.join(directory, "partial-batch", f"combined-{index}.mp4")
+                        os.path.join(directory, "partial-batch", f"combined-{index}.gen1.mp4")
                         for index in range(1, fail_at)
                     ])
                     self.assertEqual(result["failed_video_index"], fail_at)
@@ -129,18 +131,18 @@ class TestPartialBatchResults(unittest.TestCase):
         data = response["data"]
         self.assertEqual(data["state"], tm.const.TASK_STATE_FAILED)
         self.assertEqual(data["failed_video_index"], 2)
-        self.assertEqual(data["videos"], ["/api/v1/download/partial-batch/final-1.mp4"])
-        self.assertEqual(data["combined_videos"], ["/api/v1/download/partial-batch/combined-1.mp4"])
+        self.assertEqual(data["videos"], ["/api/v1/download/partial-batch/final-1.gen1.mp4"])
+        self.assertEqual(data["combined_videos"], ["/api/v1/download/partial-batch/combined-1.gen1.mp4"])
 
     def test_checkpoint_error_still_returns_the_completed_file(self):
         class FailOnceState(MemoryState):
             failed_checkpoint = False
 
             def update_task(self, task_id, *args, **kwargs):
+                task = self.get_task(task_id)
                 if (
-                    kwargs.get("videos")
-                    and kwargs.get("state", tm.const.TASK_STATE_PROCESSING)
-                    == tm.const.TASK_STATE_PROCESSING
+                    task and task.get("videos")
+                    and kwargs.get("progress", 0) > 50
                     and not self.failed_checkpoint
                 ):
                     self.failed_checkpoint = True
@@ -152,7 +154,7 @@ class TestPartialBatchResults(unittest.TestCase):
             result, checkpoints = self._run_batch(directory, state)
             self.assertEqual(len(checkpoints), 1)
             self.assertEqual(result["videos"], [
-                os.path.join(directory, "partial-batch", "final-1.mp4"),
+                os.path.join(directory, "partial-batch", "final-1.gen1.mp4"),
             ])
             self.assertEqual(result["state"], tm.const.TASK_STATE_FAILED)
             self.assertEqual(result["error"], "OSError: checkpoint unavailable")
@@ -189,13 +191,14 @@ class TestPartialBatchResults(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             state = RecoveringState()
-            result, checkpoints = self._run_batch(directory, state)
-            self.assertEqual(len(checkpoints), 1)
+            result, checkpoints = self._run_batch(directory, state, fail_at=2)
+            self.assertEqual(len(checkpoints), 2)
+            self.assertEqual(state.failed_writes, 2)
             self.assertEqual(result["videos"], [
-                os.path.join(directory, "partial-batch", "final-1.mp4"),
+                os.path.join(directory, "partial-batch", "final-1.gen1.mp4"),
             ])
             self.assertEqual(result["state"], tm.const.TASK_STATE_FAILED)
-            self.assertEqual(result["error"], "OSError: state temporarily unavailable")
+            self.assertEqual(result["error"], "OSError: simulated render failure")
             self.assertEqual(result, state.get_task("partial-batch"))
 
 
